@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>LearnTrack cyan progress ring icon</title>
+  <circle cx="512" cy="512" r="328" fill="none" stroke="#54E8FF" stroke-width="112"/>
+  <path fill="#54E8FF" d="M512 445L579 512L512 579L445 512Z"/>
+</svg>

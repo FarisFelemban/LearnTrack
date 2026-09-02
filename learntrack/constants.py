@@ -36,6 +36,7 @@ BREAK_DURATION = 40
 PACKAGE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = PACKAGE_DIR / "assets"
 BACKDROP_PATH = ASSET_DIR / "cyber_guild_backdrop.png"
+APP_ICON_PATH = ASSET_DIR / "LearnTrack-cyan-ring-icon.ico"
 FONT_PATHS = tuple(
     ASSET_DIR / "fonts" / filename
     for filename in (

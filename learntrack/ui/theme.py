@@ -1,5 +1,57 @@
 """Application-wide cyber RPG styling."""
 
+from __future__ import annotations
+
+import ctypes
+import sys
+
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtWidgets import QWidget
+
+
+TITLE_BAR_COLOR = "#0b1220"
+
+
+def _windows_color_ref(hex_color: str) -> int:
+    """Convert #RRGGBB into the COLORREF format expected by Windows."""
+
+    red, green, blue = bytes.fromhex(hex_color.removeprefix("#"))
+    return red | (green << 8) | (blue << 16)
+
+
+def _style_windows_title_bar(widget: QWidget) -> None:
+    """Match a native Windows title bar to LearnTrack's sidebar."""
+
+    if sys.platform != "win32":
+        return
+
+    try:
+        window_handle = ctypes.c_void_p(int(widget.winId()))
+        dwm = ctypes.windll.dwmapi
+
+        enabled = ctypes.c_int(1)
+        caption_color = ctypes.c_int(_windows_color_ref(TITLE_BAR_COLOR))
+        text_color = ctypes.c_int(_windows_color_ref("#e8f4ff"))
+        border_color = ctypes.c_int(_windows_color_ref("#1d3852"))
+
+        # Windows 10 20H1 and later use attribute 20 for dark caption controls.
+        dwm.DwmSetWindowAttribute(window_handle, 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
+        dwm.DwmSetWindowAttribute(window_handle, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
+        dwm.DwmSetWindowAttribute(window_handle, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+        dwm.DwmSetWindowAttribute(window_handle, 34, ctypes.byref(border_color), ctypes.sizeof(border_color))
+    except (AttributeError, OSError):
+        # Older Windows versions may not expose DWM caption-color controls.
+        return
+
+
+class WindowsTitleBarStyler(QObject):
+    """Apply the native title-bar colors whenever a top-level window opens."""
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt API
+        if event.type() == QEvent.Type.Show and isinstance(watched, QWidget) and watched.isWindow():
+            _style_windows_title_bar(watched)
+        return super().eventFilter(watched, event)
+
 APP_STYLE = """
 QWidget {
     color: #e8f4ff;

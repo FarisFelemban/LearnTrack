@@ -22,12 +22,13 @@ On the first run, the game asks only for your player name. Progress saves automa
 
 ## Included gameplay
 
-- Dashboard with level progress, current run, activity, and 20/25/30-minute focus timers or a 40-minute break timer
-- Filterable Quest Board with the complete FastAPI quest line from `LearnTrack.md`
+- Dashboard with level progress, current run, optional backdrop artwork, activity, and editable focus/break timer presets
+- Filterable Quest Board with the complete FastAPI quest line from `LearnTrack.md`, safe resets, and reward-free replays
 - Editable learning paths, quests, bonuses, bosses, requirements, and shop rewards
 - Evidence and confirmation before claims, mandatory boss checklists, and duplicate-claim protection
 - Repeatable shop purchases with Level and Gold checks
-- Journal with immutable completion snapshots, evidence, purchases, and overall statistics
+- Journal with immutable completion/replay snapshots, evidence, purchases, and overall statistics
+- AI-assisted quest batches through a copyable prompt, validated JSON preview, and atomic import into an existing path
 - Validated JSON export/import, automatic atomic saves, corruption backups, and confirmed reset
 
 Completed or historically used content is archived instead of removing its history. XP never decreases, and Gold only decreases through a confirmed shop purchase.

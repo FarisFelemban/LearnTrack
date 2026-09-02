@@ -6,11 +6,12 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QStandardPaths, Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from .constants import (
     APPLICATION_NAME,
+    APP_ICON_PATH,
     FONT_PATHS,
     LEGACY_APPLICATION_NAME,
     LEGACY_ORGANIZATION_NAME,
@@ -20,7 +21,7 @@ from .defaults import create_default_state
 from .storage import SaveCorruptionError, SaveManager
 from .ui.dialogs import NameSetupDialog
 from .ui.main_window import MainWindow
-from .ui.theme import APP_STYLE
+from .ui.theme import APP_STYLE, WindowsTitleBarStyler
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:
@@ -35,11 +36,15 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     for font_path in FONT_PATHS:
         QFontDatabase.addApplicationFont(str(font_path))
     app.setApplicationDisplayName("LearnTrack")
+    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     app.setStyle("Fusion")
     application_font = QFont()
     application_font.setFamilies(["Inter", "Segoe UI Symbol"])
     app.setFont(application_font)
     app.setStyleSheet(APP_STYLE)
+    title_bar_styler = WindowsTitleBarStyler(app)
+    app.installEventFilter(title_bar_styler)
+    app.setProperty("titleBarStyler", title_bar_styler)
     return app
 
 

@@ -4,22 +4,28 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
 )
 
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
+from ..quest_import import build_quest_prompt, parse_quest_batch
 
 
 def _buttons(dialog: QDialog, save_text: str = "Save") -> QDialogButtonBox:
@@ -180,6 +186,208 @@ class QuestDialog(QDialog):
         }
 
 
+class QuestImportDialog(QDialog):
+    """Copy an AI prompt, preview its JSON response, and import it safely."""
+
+    def __init__(self, engine, parent=None, preferred_path_id: str | None = None):
+        super().__init__(parent)
+        self.engine = engine
+        self._preview_quests: list[dict] | None = None
+        self.imported_count = 0
+        self.setWindowTitle("Generate & Import Quests")
+        self.resize(780, 680)
+        self.setMinimumSize(680, 600)
+
+        outer = QVBoxLayout(self)
+        heading = QLabel("GENERATE QUESTS WITH YOUR AI")
+        heading.setObjectName("sectionTitle")
+        outer.addWidget(heading)
+        note = QLabel(
+            "LearnTrack does not contact an AI. Copy the prompt into your preferred AI, then paste its JSON response below."
+        )
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        outer.addWidget(note)
+
+        inputs = QFormLayout()
+        self.path = QComboBox()
+        available_paths = [path for path in engine.state["paths"] if not path.get("archived")]
+        for path in available_paths:
+            self.path.addItem(path["name"], path["id"])
+        selected_path_id = preferred_path_id
+        if self.path.findData(selected_path_id) < 0:
+            selected_path_id = next((path["id"] for path in available_paths if path.get("status") == "active"), None)
+        if selected_path_id is not None:
+            self.path.setCurrentIndex(max(0, self.path.findData(selected_path_id)))
+        self.topic = QLineEdit()
+        self.topic.setPlaceholderText("For example: Python data structures")
+        inputs.addRow("Learning path", self.path)
+        inputs.addRow("Learning topic", self.topic)
+        outer.addLayout(inputs)
+
+        prompt_label = QLabel("1. COPY THIS PROMPT")
+        prompt_label.setObjectName("sectionTitle")
+        outer.addWidget(prompt_label)
+        self.prompt = QPlainTextEdit()
+        self.prompt.setReadOnly(True)
+        self.prompt.setMaximumHeight(205)
+        outer.addWidget(self.prompt)
+        self.copy_button = QPushButton("Copy AI prompt")
+        self.copy_button.clicked.connect(self.copy_prompt)
+        outer.addWidget(self.copy_button)
+
+        response_label = QLabel("2. PASTE THE AI RESPONSE")
+        response_label.setObjectName("sectionTitle")
+        outer.addWidget(response_label)
+        self.response = QPlainTextEdit()
+        self.response.setPlaceholderText('Paste the JSON object containing the "quests" list here…')
+        self.response.setMinimumHeight(120)
+        outer.addWidget(self.response, 1)
+
+        preview_row = QHBoxLayout()
+        self.preview_button = QPushButton("Preview quests")
+        self.preview_button.setProperty("accent", True)
+        self.preview_button.clicked.connect(self.preview_import)
+        self.preview_summary = QLabel("No batch previewed yet")
+        self.preview_summary.setObjectName("muted")
+        preview_row.addWidget(self.preview_button)
+        preview_row.addWidget(self.preview_summary)
+        preview_row.addStretch()
+        outer.addLayout(preview_row)
+
+        self.preview_table = QTableWidget(0, 4)
+        self.preview_table.setHorizontalHeaderLabels(["Stage", "Quest", "Difficulty", "Reward"])
+        self.preview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.preview_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.verticalHeader().hide()
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview_table.setMaximumHeight(180)
+        outer.addWidget(self.preview_table)
+
+        actions = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.import_button = actions.addButton("Import quests", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.import_button.setEnabled(False)
+        self.import_button.clicked.connect(self.import_preview)
+        actions.rejected.connect(self.reject)
+        outer.addWidget(actions)
+
+        self.topic.textChanged.connect(self._update_prompt)
+        self.path.currentIndexChanged.connect(self._path_changed)
+        self.response.textChanged.connect(self._invalidate_preview)
+        self._update_prompt()
+
+    @property
+    def custom_rewards_enabled(self) -> bool:
+        return self.engine.state["profile"].get("allow_custom_import_rewards", False)
+
+    def _update_prompt(self) -> None:
+        self.prompt.setPlainText(
+            build_quest_prompt(self.topic.text(), self.path.currentText(), self.custom_rewards_enabled)
+        )
+
+    def _path_changed(self) -> None:
+        self._update_prompt()
+        self._invalidate_preview()
+
+    def _invalidate_preview(self) -> None:
+        self._preview_quests = None
+        self.import_button.setEnabled(False)
+        self.preview_summary.setText("No batch previewed yet")
+        self.preview_table.setRowCount(0)
+
+    def copy_prompt(self) -> None:
+        if not self.topic.text().strip():
+            QMessageBox.warning(self, "Learning topic required", "Enter the topic you want the AI to build quests for.")
+            self.topic.setFocus()
+            return
+        QApplication.clipboard().setText(self.prompt.toPlainText())
+        self.copy_button.setText("Copied")
+
+    def preview_import(self) -> None:
+        if self.path.currentData() is None:
+            QMessageBox.warning(self, "Learning path required", "Create or select a non-archived learning path first.")
+            return
+        if not self.topic.text().strip():
+            QMessageBox.warning(self, "Learning topic required", "Enter the topic used to generate this quest batch.")
+            self.topic.setFocus()
+            return
+        try:
+            raw_quests = parse_quest_batch(self.response.toPlainText())
+            prepared = self.engine.prepare_quest_import(self.path.currentData(), raw_quests)
+        except GameRuleError as exc:
+            QMessageBox.warning(self, "Cannot preview quests", str(exc))
+            return
+
+        self._preview_quests = raw_quests
+        self.preview_table.setRowCount(len(prepared))
+        for row, quest in enumerate(prepared):
+            values = (
+                quest["stage"],
+                quest["title"],
+                quest["difficulty"].title(),
+                f"{quest['xp']} XP / {quest['gold']} Gold",
+            )
+            for column, value in enumerate(values):
+                self.preview_table.setItem(row, column, QTableWidgetItem(value))
+        mode = "custom rewards" if self.custom_rewards_enabled else "balanced rewards"
+        self.preview_summary.setText(f"{len(prepared)} quests ready · {mode}")
+        self.import_button.setEnabled(True)
+
+    def import_preview(self) -> None:
+        if self._preview_quests is None:
+            return
+        count = len(self._preview_quests)
+        answer = QMessageBox.question(
+            self,
+            "Import quest batch?",
+            f"Add {count} quests to “{self.path.currentText()}”?\n\nAll quests will begin as Available.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            imported = self.engine.import_quests(self.path.currentData(), self._preview_quests)
+        except GameRuleError as exc:
+            QMessageBox.warning(self, "Cannot import quests", str(exc))
+            self._invalidate_preview()
+            return
+        self.imported_count = len(imported)
+        super().accept()
+
+
+class TimerPresetsDialog(QDialog):
+    """Edit the three focus shortcuts and one break shortcut."""
+
+    def __init__(self, focus_minutes: tuple[int, int, int], break_minutes: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Timer Presets")
+        self.setMinimumWidth(390)
+        form = QFormLayout(self)
+        note = QLabel("Choose the minute values shown beside the timer. You can still click the timer itself for a custom duration.")
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        form.addRow(note)
+        self.focus_inputs = []
+        for index, minutes in enumerate(focus_minutes, start=1):
+            value = QSpinBox()
+            value.setRange(1, 1440)
+            value.setSuffix(" min")
+            value.setValue(minutes)
+            form.addRow(f"Focus preset {index}", value)
+            self.focus_inputs.append(value)
+        self.break_input = QSpinBox()
+        self.break_input.setRange(1, 1440)
+        self.break_input.setSuffix(" min")
+        self.break_input.setValue(break_minutes)
+        form.addRow("Break preset", self.break_input)
+        form.addRow(_buttons(self, "Save presets"))
+
+    def data(self) -> tuple[tuple[int, int, int], int]:
+        focus = tuple(value.value() for value in self.focus_inputs)
+        return focus, self.break_input.value()
+
+
 class BossDialog(QDialog):
     def __init__(self, paths: list[dict], parent=None, item: dict | None = None):
         super().__init__(parent)
@@ -280,14 +488,19 @@ class RewardDialog(QDialog):
 
 
 class CompletionDialog(QDialog):
-    def __init__(self, item: dict, parent=None, boss: bool = False):
+    def __init__(self, item: dict, parent=None, boss: bool = False, replay: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Claim boss victory" if boss else "Claim quest completion")
+        self.setWindowTitle("Complete quest replay" if replay else "Claim boss victory" if boss else "Claim quest completion")
         self.resize(560, 520 if boss else 400)
         layout = QVBoxLayout(self)
         title = QLabel(item["title"])
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
+        if replay:
+            replay_note = QLabel("This is a replay. Your evidence will be saved, but it grants 0 XP and 0 Gold.")
+            replay_note.setObjectName("muted")
+            replay_note.setWordWrap(True)
+            layout.addWidget(replay_note)
         self.requirement_checks: list[tuple[str, QCheckBox]] = []
         if boss:
             label = QLabel("Victory requirements")
@@ -305,7 +518,7 @@ class CompletionDialog(QDialog):
         self.evidence.setPlaceholderText("Describe what you completed, tested, explained, or built…")
         layout.addWidget(self.evidence)
         self.bonus_checks: list[tuple[str, QCheckBox]] = []
-        if item.get("bonuses"):
+        if item.get("bonuses") and not replay:
             bonus_label = QLabel("Optional objectives completed")
             bonus_label.setObjectName("muted")
             layout.addWidget(bonus_label)
@@ -313,7 +526,7 @@ class CompletionDialog(QDialog):
                 check = QCheckBox(f"{bonus['title']}  (+{bonus['xp']} XP, +{bonus['gold']} Gold)")
                 layout.addWidget(check)
                 self.bonus_checks.append((bonus["id"], check))
-        buttons = _buttons(self, "Review claim")
+        buttons = _buttons(self, "Review replay" if replay else "Review claim")
         layout.addWidget(buttons)
 
     @property

@@ -10,7 +10,6 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import BACKDROP_PATH
 from ..engine import next_level_progress
+from .dialogs import TimerPresetsDialog
 
 
 class Card(QFrame):
@@ -108,18 +108,27 @@ class BackdropPanel(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.pixmap = QPixmap(str(BACKDROP_PATH))
+        self.artwork_visible = True
+
+    def set_artwork_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if self.artwork_visible != visible:
+            self.artwork_visible = visible
+            self.update()
 
     def paintEvent(self, event):  # noqa: N802 - Qt API
         super().paintEvent(event)
         painter = QPainter(self)
-        if not self.pixmap.isNull():
+        if self.artwork_visible and not self.pixmap.isNull():
             scaled = self.pixmap.scaled(
                 self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
             )
             x = (scaled.width() - self.width()) // 2
             y = (scaled.height() - self.height()) // 2
             painter.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
-        painter.fillRect(self.rect(), QColor(3, 8, 17, 130))
+            painter.fillRect(self.rect(), QColor(3, 8, 17, 130))
+        else:
+            painter.fillRect(self.rect(), QColor("#070b14"))
 
 
 class CircularTimer(QWidget):
@@ -248,9 +257,14 @@ class TimerPanel(Card):
         self.clock.timeout.connect(self._tick)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        title_row = QHBoxLayout()
         title = QLabel("TIMER")
         title.setObjectName("sectionTitle")
-        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.presets_button = QPushButton("Presets…")
+        self.presets_button.clicked.connect(self.edit_presets)
+        title_row.addWidget(title)
+        title_row.addWidget(self.presets_button)
+        layout.addLayout(title_row)
         self.dial = CircularTimer()
         self.dial.setMouseTracking(True)
         self.dial.edit_requested.connect(self.begin_duration_edit)
@@ -258,13 +272,15 @@ class TimerPanel(Card):
         self.dial.value_submitted.connect(self.apply_edited_duration)
         layout.addWidget(self.dial, alignment=Qt.AlignmentFlag.AlignHCenter)
         duration_row = QHBoxLayout()
-        for minutes in (20, 25, 30):
-            button = QPushButton(f"{minutes}m")
-            button.clicked.connect(lambda checked=False, value=minutes: self.choose("focus", value))
+        self.focus_buttons = []
+        for index in range(3):
+            button = QPushButton()
+            button.clicked.connect(lambda checked=False, preset_index=index: self.choose_focus_preset(preset_index))
             duration_row.addWidget(button)
-        break_button = QPushButton("40m break")
-        break_button.clicked.connect(lambda: self.choose("break", 40))
-        duration_row.addWidget(break_button)
+            self.focus_buttons.append(button)
+        self.break_button = QPushButton()
+        self.break_button.clicked.connect(self.choose_break_preset)
+        duration_row.addWidget(self.break_button)
         layout.addLayout(duration_row)
         control_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
@@ -275,7 +291,32 @@ class TimerPanel(Card):
         control_row.addWidget(self.start_button)
         control_row.addWidget(reset_button)
         layout.addLayout(control_row)
+        self.refresh_preset_buttons()
         self.refresh()
+
+    def refresh_preset_buttons(self) -> None:
+        focus_minutes, break_minutes = self.engine.timer_presets
+        for button, minutes in zip(self.focus_buttons, focus_minutes):
+            button.setText(f"{minutes}m")
+        self.break_button.setText(f"{break_minutes}m break")
+
+    def choose_focus_preset(self, index: int) -> None:
+        focus_minutes, _ = self.engine.timer_presets
+        self.choose("focus", focus_minutes[index])
+
+    def choose_break_preset(self) -> None:
+        _, break_minutes = self.engine.timer_presets
+        self.choose("break", break_minutes)
+
+    def edit_presets(self) -> None:
+        focus_minutes, break_minutes = self.engine.timer_presets
+        dialog = TimerPresetsDialog(focus_minutes, break_minutes, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        focus_minutes, break_minutes = dialog.data()
+        self.engine.set_timer_presets(focus_minutes, break_minutes)
+        self.refresh_preset_buttons()
+        self.timer_saved.emit()
 
     def refresh(self) -> None:
         timer = self.engine.progress["timer"]
@@ -358,26 +399,6 @@ class TimerPanel(Card):
         if remaining == 0:
             self.clock.stop()
         self.timer_saved.emit()
-
-
-class FadeController:
-    """Keep the active opacity animation alive for its target widget."""
-
-    def __init__(self):
-        self.animation: QPropertyAnimation | None = None
-
-    def fade_in(self, widget: QWidget, enabled: bool) -> None:
-        if not enabled:
-            return
-        effect = QGraphicsOpacityEffect(widget)
-        widget.setGraphicsEffect(effect)
-        self.animation = QPropertyAnimation(effect, b"opacity", widget)
-        self.animation.setDuration(180)
-        self.animation.setStartValue(0.35)
-        self.animation.setEndValue(1.0)
-        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.animation.finished.connect(lambda: widget.setGraphicsEffect(None))
-        self.animation.start()
 
 
 class CelebrationOverlay(QWidget):

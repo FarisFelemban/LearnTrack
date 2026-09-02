@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
-from .dialogs import BossDialog, CompletionDialog, PathDialog, QuestDialog, RewardDialog
+from .dialogs import BossDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
 from .widgets import AnimatedXPBar, BackdropPanel, Card, StatCard, TimerPanel
 
 
@@ -172,6 +172,7 @@ class DashboardScreen(Page):
         active_paths = [path for path in self.engine.state["paths"] if path["status"] == "active" and not path.get("archived")]
         self.path_card.set_value(active_paths[0]["name"] if active_paths else "None")
         self.xp_bar.show_xp(self.engine.progress["xp"], animate)
+        self.hero.set_artwork_visible(profile.get("show_current_run_background", True))
         current = self.engine.progress.get("current_run")
         if current:
             collection = "quests" if current["kind"] == "quest" else "bosses"
@@ -219,6 +220,9 @@ class QuestBoardScreen(Page):
         add = QPushButton("+ Add quest")
         add.setProperty("accent", True)
         add.clicked.connect(self.add_quest)
+        import_button = QPushButton("Generate and import quests…")
+        import_button.clicked.connect(self.import_quests)
+        title_row.addWidget(import_button)
         title_row.addWidget(add)
         outer.addLayout(title_row)
         filters = QHBoxLayout()
@@ -265,12 +269,18 @@ class QuestBoardScreen(Page):
         self.complete_button.clicked.connect(self.complete_selected)
         self.edit_button = QPushButton("Edit")
         self.edit_button.clicked.connect(self.edit_selected)
+        self.reset_button = QPushButton("Reset quest")
+        self.reset_button.clicked.connect(self.reset_selected)
         self.archive_button = QPushButton("Archive")
         self.archive_button.setProperty("danger", True)
         self.archive_button.clicked.connect(self.archive_selected)
-        for button in (self.start_button, self.complete_button, self.edit_button, self.archive_button):
+        for button in (self.start_button, self.complete_button):
             buttons.addWidget(button)
         detail_layout.addLayout(buttons)
+        management_buttons = QHBoxLayout()
+        for button in (self.edit_button, self.reset_button, self.archive_button):
+            management_buttons.addWidget(button)
+        detail_layout.addLayout(management_buttons)
         splitter.addWidget(detail)
         splitter.setStretchFactor(1, 2)
         outer.addWidget(splitter, 1)
@@ -341,7 +351,7 @@ class QuestBoardScreen(Page):
     def show_details(self, current, previous=None) -> None:
         quest = self.selected()
         enabled = quest is not None
-        for button in (self.start_button, self.complete_button, self.edit_button, self.archive_button):
+        for button in (self.start_button, self.complete_button, self.edit_button, self.reset_button, self.archive_button):
             button.setEnabled(enabled)
         if not quest:
             self.detail_title.setText("No quests match these filters")
@@ -367,6 +377,7 @@ class QuestBoardScreen(Page):
         self.start_button.setText("Current quest" if is_current else "Start quest")
         self.start_button.setEnabled(not is_current and quest["status"] not in ("completed", "archived"))
         self.complete_button.setEnabled(claimable)
+        self.reset_button.setEnabled(quest["status"] in ("in_progress", "completed") and not quest.get("archived"))
         self.archive_button.setEnabled(not quest.get("archived"))
 
     def start_selected(self) -> None:
@@ -383,20 +394,31 @@ class QuestBoardScreen(Page):
         quest = self.selected()
         if not quest:
             return
-        dialog = CompletionDialog(quest, self)
+        replay = any(claim["item_id"] == quest["id"] for claim in self.engine.progress["quest_claims"])
+        dialog = CompletionDialog(quest, self, replay=replay)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        xp = quest["xp"] + sum(b["xp"] for b in quest.get("bonuses", []) if b["id"] in dialog.selected_bonuses)
-        gold = quest["gold"] + sum(b["gold"] for b in quest.get("bonuses", []) if b["id"] in dialog.selected_bonuses)
+        xp = 0 if replay else quest["xp"] + sum(
+            bonus["xp"] for bonus in quest.get("bonuses", []) if bonus["id"] in dialog.selected_bonuses
+        )
+        gold = 0 if replay else quest["gold"] + sum(
+            bonus["gold"] for bonus in quest.get("bonuses", []) if bonus["id"] in dialog.selected_bonuses
+        )
         answer = QMessageBox.question(
             self,
-            "Confirm quest claim",
-            f"Claim “{quest['title']}” for +{xp} XP and +{gold} Gold?\n\nThis reward can only be claimed once.",
+            "Confirm quest replay" if replay else "Confirm quest claim",
+            (
+                f"Record this replay of “{quest['title']}”?\n\nIt grants no additional XP or Gold."
+                if replay
+                else f"Claim “{quest['title']}” for +{xp} XP and +{gold} Gold?\n\nThis reward can only be claimed once."
+            ),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            claim = self.engine.complete_quest(quest["id"], dialog.evidence_text, dialog.selected_bonuses)
+            claim = self.engine.complete_quest(
+                quest["id"], dialog.evidence_text, [] if replay else dialog.selected_bonuses
+            )
             self.changed.emit()
             self.completed.emit(claim["level_after"] > claim["level_before"])
         except GameRuleError as exc:
@@ -423,6 +445,11 @@ class QuestBoardScreen(Page):
             except GameRuleError as exc:
                 _message(self, "Cannot edit quest", exc)
 
+    def import_quests(self) -> None:
+        dialog = QuestImportDialog(self.engine, self, self.path_filter.currentData())
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.changed.emit()
+
     def archive_selected(self) -> None:
         quest = self.selected()
         if not quest:
@@ -430,6 +457,23 @@ class QuestBoardScreen(Page):
         if QMessageBox.question(self, "Archive quest?", f"Archive “{quest['title']}”? Its history will be preserved.") == QMessageBox.StandardButton.Yes:
             self.engine.archive("quests", quest["id"])
             self.changed.emit()
+
+    def reset_selected(self) -> None:
+        quest = self.selected()
+        if not quest or quest["status"] not in ("in_progress", "completed") or quest.get("archived"):
+            return
+        explanation = (
+            "Its original Journal entry and rewards will stay. The next completion is recorded as a 0-reward replay."
+            if quest["status"] == "completed"
+            else "It will return to Available and stop being the current quest."
+        )
+        answer = QMessageBox.question(self, "Reset quest?", f"Reset “{quest['title']}”?\n\n{explanation}")
+        if answer == QMessageBox.StandardButton.Yes:
+            try:
+                self.engine.reset_quest(quest["id"])
+                self.changed.emit()
+            except GameRuleError as exc:
+                _message(self, "Cannot reset quest", exc)
 
 
 class PathsScreen(Page):
@@ -857,11 +901,13 @@ class JournalScreen(Page):
         self.claims_table.setHorizontalHeaderLabels(["Date", "Path", "Type", "Quest / Boss", "Reward", "Evidence"])
         self.claims_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.claims_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.claims_table.verticalHeader().hide()
         tabs.addTab(self.claims_table, "Completed quests & bosses")
         self.reward_table = QTableWidget(0, 4)
         self.reward_table.setHorizontalHeaderLabels(["Date", "Earned reward", "Gold spent", "Remaining"])
         self.reward_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.reward_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.reward_table.verticalHeader().hide()
         tabs.addTab(self.reward_table, "Earned rewards")
         self.activity = QListWidget()
         tabs.addTab(self.activity, "Activity history")
@@ -870,13 +916,16 @@ class JournalScreen(Page):
 
     def refresh(self) -> None:
         progress = self.engine.progress
+        rewarded_quests = sum(not claim.get("is_replay", False) for claim in progress["quest_claims"])
+        replay_count = sum(claim.get("is_replay", False) for claim in progress["quest_claims"])
         self.title.setText(f"{self.engine.state['profile']['player_name']} — Player Journal")
         self.stats.setText(
             f"<b style='color:#45e6ff'>Level {self.engine.level}</b> &nbsp;•&nbsp; "
             f"{progress['xp']:,} total XP &nbsp;•&nbsp; "
             f"<span style='color:#ffc857'>{progress['gold']:,} available Gold</span> &nbsp;•&nbsp; "
             f"{progress['total_gold_earned']:,} total Gold earned &nbsp;•&nbsp; "
-            f"{len(progress['quest_claims'])} quests &nbsp;•&nbsp; {len(progress['boss_claims'])} bosses defeated"
+            f"{rewarded_quests} quests &nbsp;•&nbsp; {replay_count} replays &nbsp;•&nbsp; "
+            f"{len(progress['boss_claims'])} bosses defeated"
         )
         claims = sorted(progress["quest_claims"] + progress["boss_claims"], key=lambda item: item["completed_at"], reverse=True)
         self.claims_table.setRowCount(len(claims))
@@ -884,7 +933,7 @@ class JournalScreen(Page):
             values = (
                 _friendly_time(claim["completed_at"]),
                 _path_name(self.engine, claim["path_id"]),
-                claim["kind"].title(),
+                "Quest Replay" if claim.get("is_replay", False) else claim["kind"].title(),
                 claim["snapshot"]["title"],
                 f"+{claim['xp_awarded']} XP, +{claim['gold_awarded']} Gold",
                 claim["evidence"],
@@ -930,7 +979,28 @@ class SettingsScreen(Page):
         self.animations = QCheckBox("Enable restrained interface animations")
         self.animations.toggled.connect(self.save_animations)
         form.addWidget(self.animations, 2, 0, 1, 3)
+        self.current_run_background = QCheckBox("Show artwork behind Current Run")
+        self.current_run_background.toggled.connect(self.save_current_run_background)
+        form.addWidget(self.current_run_background, 3, 0, 1, 3)
         outer.addWidget(profile)
+        quest_import = Card()
+        import_layout = QVBoxLayout(quest_import)
+        heading = QLabel("QUEST IMPORT")
+        heading.setObjectName("sectionTitle")
+        import_layout.addWidget(heading)
+        import_note = QLabel(
+            "Build a copyable prompt for your preferred AI, then preview and import its generated quests."
+        )
+        import_note.setObjectName("muted")
+        import_note.setWordWrap(True)
+        import_layout.addWidget(import_note)
+        self.custom_import_rewards = QCheckBox("Allow AI-generated imports to set custom XP, Gold, and bonuses")
+        self.custom_import_rewards.toggled.connect(self.save_custom_import_rewards)
+        import_layout.addWidget(self.custom_import_rewards)
+        import_quests = QPushButton("Generate and import quests…")
+        import_quests.clicked.connect(self.import_quests)
+        import_layout.addWidget(import_quests)
+        outer.addWidget(quest_import)
         data = Card()
         layout = QVBoxLayout(data)
         heading = QLabel("SAVE DATA")
@@ -966,6 +1036,16 @@ class SettingsScreen(Page):
         self.animations.blockSignals(True)
         self.animations.setChecked(self.engine.state["profile"].get("animations_enabled", True))
         self.animations.blockSignals(False)
+        self.current_run_background.blockSignals(True)
+        self.current_run_background.setChecked(
+            self.engine.state["profile"].get("show_current_run_background", True)
+        )
+        self.current_run_background.blockSignals(False)
+        self.custom_import_rewards.blockSignals(True)
+        self.custom_import_rewards.setChecked(
+            self.engine.state["profile"].get("allow_custom_import_rewards", False)
+        )
+        self.custom_import_rewards.blockSignals(False)
 
     def save_name(self) -> None:
         try:
@@ -977,3 +1057,16 @@ class SettingsScreen(Page):
     def save_animations(self, enabled: bool) -> None:
         self.engine.set_animations(enabled)
         self.changed.emit()
+
+    def save_custom_import_rewards(self, enabled: bool) -> None:
+        self.engine.set_custom_import_rewards(enabled)
+        self.changed.emit()
+
+    def save_current_run_background(self, enabled: bool) -> None:
+        self.engine.set_current_run_background(enabled)
+        self.changed.emit()
+
+    def import_quests(self) -> None:
+        dialog = QuestImportDialog(self.engine, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.changed.emit()

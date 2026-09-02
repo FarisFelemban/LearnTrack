@@ -87,10 +87,70 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(self.quest["archived"])
         self.assertEqual(self.engine.progress["quest_claims"][0], snapshot)
 
+    def test_reset_in_progress_quest_returns_it_to_available(self):
+        self.engine.start_run("quest", self.quest["id"])
+
+        self.engine.reset_quest(self.quest["id"])
+
+        self.assertEqual(self.quest["status"], "available")
+        self.assertIsNone(self.engine.progress["current_run"])
+        self.assertEqual((self.engine.progress["xp"], self.engine.progress["gold"]), (0, 0))
+
+    def test_completed_quest_can_be_replayed_without_more_rewards(self):
+        self.engine.start_run("quest", self.quest["id"])
+        original = self.engine.complete_quest(self.quest["id"], "Original proof")
+        original_totals = (self.engine.progress["xp"], self.engine.progress["gold"])
+
+        self.engine.reset_quest(self.quest["id"])
+        self.engine.start_run("quest", self.quest["id"])
+        with self.assertRaisesRegex(GameRuleError, "Evidence"):
+            self.engine.complete_quest(self.quest["id"], " ")
+        replay = self.engine.complete_quest(self.quest["id"], "Fresh replay proof")
+
+        self.assertEqual((self.engine.progress["xp"], self.engine.progress["gold"]), original_totals)
+        self.assertFalse(original.get("is_replay", False))
+        self.assertTrue(replay["is_replay"])
+        self.assertEqual((replay["xp_awarded"], replay["gold_awarded"]), (0, 0))
+        self.assertEqual(len(self.engine.progress["quest_claims"]), 2)
+        self.assertEqual(self.quest["status"], "completed")
+
+        self.engine.reset_quest(self.quest["id"])
+        self.engine.start_run("quest", self.quest["id"])
+        second_replay = self.engine.complete_quest(self.quest["id"], "Another replay")
+        self.assertTrue(second_replay["is_replay"])
+        self.assertEqual((self.engine.progress["xp"], self.engine.progress["gold"]), original_totals)
+        self.assertEqual(len(self.engine.progress["quest_claims"]), 3)
+        validate_state(self.state)
+
+    def test_reset_rejects_available_and_archived_quests(self):
+        with self.assertRaisesRegex(GameRuleError, "in-progress or completed"):
+            self.engine.reset_quest(self.quest["id"])
+        self.engine.archive("quests", self.quest["id"])
+        with self.assertRaisesRegex(GameRuleError, "Archived"):
+            self.engine.reset_quest(self.quest["id"])
+
     def test_timer_never_grants_rewards(self):
         self.engine.set_timer("focus", 20)
         self.engine.update_timer(0, False)
         self.assertEqual((self.engine.progress["xp"], self.engine.progress["gold"]), (0, 0))
+
+    def test_dashboard_background_and_timer_presets_are_saved_preferences(self):
+        self.assertTrue(self.state["profile"]["show_current_run_background"])
+        self.assertEqual(self.engine.timer_presets, ((20, 25, 30), 40))
+
+        self.engine.set_current_run_background(False)
+        self.engine.set_timer_presets((15, 35, 50), 60)
+
+        self.assertFalse(self.state["profile"]["show_current_run_background"])
+        self.assertEqual(self.engine.timer_presets, ((15, 35, 50), 60))
+        validate_state(self.state)
+
+    def test_timer_presets_require_three_values_in_the_supported_range(self):
+        with self.assertRaisesRegex(GameRuleError, "exactly three"):
+            self.engine.set_timer_presets((20, 30), 40)
+        for values in (((0, 25, 30), 40), ((20, 25, 1441), 40), ((20, 25, 30), 0)):
+            with self.assertRaisesRegex(GameRuleError, "1,440"):
+                self.engine.set_timer_presets(*values)
 
     def test_custom_content(self):
         path = self.engine.add_path("Python", "backlog", "Plan it", "Learn Python")
@@ -103,6 +163,103 @@ class EngineTests(unittest.TestCase):
         )
         self.assertEqual(quest["path_id"], path["id"])
         self.assertTrue(quest["bonuses"][0]["id"])
+
+    def test_standard_batch_import_is_balanced_and_atomic(self):
+        before = len(self.state["quests"])
+        raw = [
+            {
+                "stage": "Stage 1 — Basics",
+                "title": "Learn values",
+                "difficulty": "Easy",
+                "definition_of_done": "Explain and use one value.",
+                "xp": 999,
+                "gold": 999,
+            },
+            {
+                "stage": "Stage 2 — Practice",
+                "title": "Build a small example",
+                "difficulty": "hard",
+                "definition_of_done": "Build and test the example.",
+            },
+        ]
+
+        imported = self.engine.import_quests("path-fastapi", raw)
+
+        self.assertEqual(len(self.state["quests"]), before + 2)
+        self.assertEqual((imported[0]["xp"], imported[0]["gold"]), (10, 5))
+        self.assertEqual((imported[1]["xp"], imported[1]["gold"]), (50, 20))
+        self.assertEqual(imported[0]["bonuses"], [])
+        self.assertTrue(all(item["status"] == "available" for item in imported))
+
+        broken = raw + [{"stage": "", "title": "Broken", "difficulty": "easy", "definition_of_done": "Done"}]
+        count_before_failure = len(self.state["quests"])
+        with self.assertRaisesRegex(GameRuleError, "Quest 1 duplicates"):
+            self.engine.import_quests("path-fastapi", broken)
+        self.assertEqual(len(self.state["quests"]), count_before_failure)
+
+    def test_batch_import_rejects_duplicates_and_oversized_batches(self):
+        item = {
+            "stage": "A Stage",
+            "title": "A Quest",
+            "difficulty": "normal",
+            "definition_of_done": "Show a result.",
+        }
+        with self.assertRaisesRegex(GameRuleError, "Quest 2 duplicates"):
+            self.engine.prepare_quest_import("path-fastapi", [item, dict(item)])
+        with self.assertRaisesRegex(GameRuleError, "at most 100"):
+            self.engine.prepare_quest_import("path-fastapi", [dict(item, title=f"Quest {i}") for i in range(101)])
+
+    def test_batch_import_previews_without_saving_and_saves_once(self):
+        changes = []
+        engine = GameEngine(self.state, lambda state: changes.append(len(state["quests"])))
+        batch = [
+            {
+                "stage": "Import Stage",
+                "title": "Atomic quest",
+                "difficulty": "easy",
+                "definition_of_done": "Verify one atomic import.",
+            }
+        ]
+        engine.prepare_quest_import("path-fastapi", batch)
+        self.assertEqual(changes, [])
+        engine.import_quests("path-fastapi", batch)
+        self.assertEqual(changes, [19])
+
+    def test_custom_batch_import_uses_supplied_rewards_and_bonuses(self):
+        self.engine.set_custom_import_rewards(True)
+        imported = self.engine.import_quests(
+            "path-fastapi",
+            [
+                {
+                    "stage": "Custom Stage",
+                    "title": "Custom rewards",
+                    "difficulty": "normal",
+                    "xp": 37,
+                    "gold": 14,
+                    "definition_of_done": "Verify the custom result.",
+                    "bonuses": [{"title": "Stretch goal", "xp": 8, "gold": 3}],
+                }
+            ],
+        )
+        self.assertEqual((imported[0]["xp"], imported[0]["gold"]), (37, 14))
+        self.assertEqual((imported[0]["bonuses"][0]["xp"], imported[0]["bonuses"][0]["gold"]), (8, 3))
+        self.assertTrue(imported[0]["bonuses"][0]["id"])
+
+        with self.assertRaisesRegex(GameRuleError, "XP must be"):
+            self.engine.prepare_quest_import(
+                "path-fastapi",
+                [{"stage": "Other", "title": "Missing rewards", "difficulty": "easy", "definition_of_done": "Done"}],
+            )
+
+    def test_old_profile_without_custom_import_setting_remains_valid(self):
+        self.state["profile"].pop("allow_custom_import_rewards")
+        self.state["profile"].pop("show_current_run_background")
+        self.state["profile"].pop("timer_presets")
+        validate_state(self.state)
+        engine = GameEngine(self.state)
+        self.assertFalse(engine.state["profile"].get("allow_custom_import_rewards", False))
+        self.assertTrue(engine.state["profile"].get("show_current_run_background", True))
+        self.assertEqual(engine.timer_presets, ((20, 25, 30), 40))
 
     def test_content_validation_rejects_broken_references_and_duplicates(self):
         broken = create_default_state()

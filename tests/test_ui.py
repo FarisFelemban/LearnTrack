@@ -1,18 +1,30 @@
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QMessageBox, QPushButton
 
 from learntrack.app import create_application
+from learntrack.constants import APP_ICON_PATH
 from learntrack.defaults import create_default_state
 from learntrack.storage import SaveManager
-from learntrack.ui.dialogs import BossDialog, CompletionDialog, PathDialog, QuestDialog, RewardDialog
+from learntrack.ui.dialogs import (
+    BossDialog,
+    CompletionDialog,
+    PathDialog,
+    QuestDialog,
+    QuestImportDialog,
+    RewardDialog,
+    TimerPresetsDialog,
+)
 from learntrack.ui.main_window import MainWindow
 
 
@@ -29,6 +41,10 @@ class UISmokeTests(unittest.TestCase):
         self.storage.save(self.state)
         self.window = MainWindow(self.state, self.storage)
         self.addCleanup(self.window.close)
+
+    def test_application_uses_bundled_icon(self):
+        self.assertTrue(APP_ICON_PATH.is_file())
+        self.assertFalse(self.app.windowIcon().isNull())
 
     def test_all_navigation_screens_show(self):
         self.window.show()
@@ -47,6 +63,7 @@ class UISmokeTests(unittest.TestCase):
             RewardDialog(self.window, self.state["shop_rewards"][0]),
             CompletionDialog(self.state["quests"][0], self.window),
             CompletionDialog(self.state["bosses"][0], self.window, boss=True),
+            TimerPresetsDialog((20, 25, 30), 40, self.window),
         ]
         for dialog in dialogs:
             dialog.show()
@@ -128,6 +145,109 @@ class UISmokeTests(unittest.TestCase):
         shop = self.window.screens["shop"]
         self.assertTrue(shop.table.verticalHeader().isHidden())
         self.assertTrue(shop.history.verticalHeader().isHidden())
+
+    def test_player_journal_hides_default_row_numbers(self):
+        journal = self.window.screens["journal"]
+        self.assertTrue(journal.claims_table.verticalHeader().isHidden())
+        self.assertTrue(journal.reward_table.verticalHeader().isHidden())
+
+    def test_player_journal_labels_reward_free_replays_separately(self):
+        quest = self.state["quests"][0]
+        self.window.engine.start_run("quest", quest["id"])
+        self.window.engine.complete_quest(quest["id"], "Original completion")
+        self.window.engine.reset_quest(quest["id"])
+        self.window.engine.start_run("quest", quest["id"])
+        self.window.engine.complete_quest(quest["id"], "Replay completion")
+        journal = self.window.screens["journal"]
+        journal.refresh()
+        self.assertIn("1 quests", journal.stats.text())
+        self.assertIn("1 replays", journal.stats.text())
+        self.assertEqual(journal.claims_table.item(0, 2).text(), "Quest Replay")
+        self.assertEqual(journal.claims_table.item(0, 4).text(), "+0 XP, +0 Gold")
+
+    def test_navigation_switches_without_fade_effect(self):
+        self.window.navigate("quests")
+        self.app.processEvents()
+        self.assertIsNone(self.window.screens["quests"].graphicsEffect())
+        self.assertFalse(hasattr(self.window, "fade"))
+
+    def test_quest_import_controls_exist_in_board_and_settings(self):
+        for screen_name in ("quests", "settings"):
+            labels = {button.text() for button in self.window.screens[screen_name].findChildren(QPushButton)}
+            self.assertIn("Generate and import quests…", labels)
+
+    def test_quest_import_dialog_copies_previews_and_imports(self):
+        original_count = len(self.state["quests"])
+        dialog = QuestImportDialog(self.window.engine, self.window, "path-fastapi")
+        self.addCleanup(dialog.close)
+        dialog.topic.setText("Testing FastAPI services")
+        dialog.copy_prompt()
+        self.assertIn("Learning topic: Testing FastAPI services", self.app.clipboard().text())
+        dialog.response.setPlainText(
+            json.dumps(
+                {
+                    "quests": [
+                        {
+                            "stage": "Stage 4 — Testing",
+                            "title": "Test one endpoint",
+                            "difficulty": "normal",
+                            "definition_of_done": "Write and run a passing endpoint test.",
+                        }
+                    ]
+                }
+            )
+        )
+
+        dialog.preview_import()
+
+        self.assertEqual(dialog.path.currentData(), "path-fastapi")
+        self.assertEqual(dialog.preview_table.rowCount(), 1)
+        self.assertTrue(dialog.import_button.isEnabled())
+        self.assertEqual(dialog.preview_table.item(0, 3).text(), "25 XP / 10 Gold")
+        with patch("learntrack.ui.dialogs.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+            dialog.import_preview()
+        self.assertEqual(dialog.imported_count, 1)
+        self.assertEqual(len(self.state["quests"]), original_count + 1)
+
+    def test_custom_import_reward_setting_defaults_off_and_saves(self):
+        settings = self.window.screens["settings"]
+        self.assertFalse(settings.custom_import_rewards.isChecked())
+        settings.custom_import_rewards.setChecked(True)
+        self.assertTrue(self.state["profile"]["allow_custom_import_rewards"])
+        self.assertTrue(self.storage.load()["profile"]["allow_custom_import_rewards"])
+
+    def test_current_run_artwork_setting_updates_dashboard_and_saves(self):
+        settings = self.window.screens["settings"]
+        dashboard = self.window.screens["dashboard"]
+        self.assertTrue(settings.current_run_background.isChecked())
+        self.assertTrue(dashboard.hero.artwork_visible)
+
+        settings.current_run_background.setChecked(False)
+
+        self.assertFalse(dashboard.hero.artwork_visible)
+        self.assertFalse(self.state["profile"]["show_current_run_background"])
+        self.assertFalse(self.storage.load()["profile"]["show_current_run_background"])
+
+    def test_timer_presets_update_shortcuts_and_selected_duration(self):
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        self.window.engine.set_timer_presets((15, 35, 50), 60)
+        timer_panel.refresh_preset_buttons()
+        self.assertEqual([button.text() for button in timer_panel.focus_buttons], ["15m", "35m", "50m"])
+        self.assertEqual(timer_panel.break_button.text(), "60m break")
+        self.assertEqual(timer_panel.presets_button.text(), "Presets…")
+
+        QTest.mouseClick(timer_panel.focus_buttons[1], Qt.MouseButton.LeftButton)
+        self.assertEqual(self.state["progress"]["timer"]["duration_seconds"], 35 * 60)
+        QTest.mouseClick(timer_panel.break_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.state["progress"]["timer"]["duration_seconds"], 60 * 60)
+
+    def test_timer_preset_dialog_returns_four_edited_values(self):
+        dialog = TimerPresetsDialog((20, 25, 30), 40, self.window)
+        self.addCleanup(dialog.close)
+        for editor, minutes in zip(dialog.focus_inputs, (10, 45, 90)):
+            editor.setValue(minutes)
+        dialog.break_input.setValue(75)
+        self.assertEqual(dialog.data(), ((10, 45, 90), 75))
 
     def test_bundled_inter_font_is_registered(self):
         self.assertIn("Inter", QFontDatabase.families())

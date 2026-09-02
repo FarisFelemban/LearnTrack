@@ -11,7 +11,15 @@ from datetime import datetime
 from typing import Callable, Iterable
 from uuid import uuid4
 
-from .constants import DIFFICULTIES, LEVEL_THRESHOLDS, PATH_STATUSES, QUEST_STATUSES, SCHEMA_VERSION
+from .constants import (
+    BREAK_DURATION,
+    DIFFICULTIES,
+    LEVEL_THRESHOLDS,
+    PATH_STATUSES,
+    QUEST_STATUSES,
+    SCHEMA_VERSION,
+    TIMER_DURATIONS,
+)
 
 
 class GameRuleError(ValueError):
@@ -61,6 +69,24 @@ def validate_state(state: object) -> None:
         )
     if not isinstance(state["profile"], dict) or not str(state["profile"].get("player_name", "")).strip():
         raise GameRuleError("The player name cannot be empty.")
+    if "allow_custom_import_rewards" in state["profile"] and not isinstance(
+        state["profile"]["allow_custom_import_rewards"], bool
+    ):
+        raise GameRuleError("The custom import rewards setting must be true or false.")
+    if "show_current_run_background" in state["profile"] and not isinstance(
+        state["profile"]["show_current_run_background"], bool
+    ):
+        raise GameRuleError("The current-run background setting must be true or false.")
+    if "timer_presets" in state["profile"]:
+        presets = state["profile"]["timer_presets"]
+        if not isinstance(presets, dict) or set(presets) != {"focus", "break"}:
+            raise GameRuleError("Timer presets must contain focus and break values.")
+        focus_presets = presets["focus"]
+        if not isinstance(focus_presets, list) or len(focus_presets) != 3:
+            raise GameRuleError("Timer presets need exactly three focus values.")
+        timer_values = focus_presets + [presets["break"]]
+        if any(isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1440 for value in timer_values):
+            raise GameRuleError("Every timer preset must be a whole number from 1 to 1,440 minutes.")
     for collection in ("paths", "quests", "bosses", "shop_rewards"):
         if not isinstance(state[collection], list):
             raise GameRuleError(f"'{collection}' must be a list.")
@@ -135,14 +161,26 @@ def validate_state(state: object) -> None:
     for field in ("quest_claims", "boss_claims"):
         claims = progress[field]
         claim_ids = [claim.get("id") for claim in claims if isinstance(claim, dict)]
-        claimed_items = [claim.get("item_id") for claim in claims if isinstance(claim, dict)]
         if len(claim_ids) != len(claims) or any(not claim_id for claim_id in claim_ids):
             raise GameRuleError(f"Progress field '{field}' contains an invalid claim.")
-        if len(claim_ids) != len(set(claim_ids)) or len(claimed_items) != len(set(claimed_items)):
+        if len(claim_ids) != len(set(claim_ids)):
             raise GameRuleError(f"Progress field '{field}' contains duplicate claims.")
+        rewarded_items = [claim.get("item_id") for claim in claims if not claim.get("is_replay", False)]
+        if len(rewarded_items) != len(set(rewarded_items)):
+            raise GameRuleError(f"Progress field '{field}' contains duplicate rewarded claims.")
+        if field == "boss_claims" and any(claim.get("is_replay", False) for claim in claims):
+            raise GameRuleError("Boss claims cannot be replays.")
+        rewarded_item_ids = set(rewarded_items)
         for claim in claims:
             if not str(claim.get("evidence", "")).strip() or not isinstance(claim.get("snapshot"), dict):
                 raise GameRuleError("Every completion claim needs evidence and a content snapshot.")
+            if "is_replay" in claim and not isinstance(claim["is_replay"], bool):
+                raise GameRuleError("A replay marker must be true or false.")
+            if claim.get("is_replay", False):
+                if claim.get("item_id") not in rewarded_item_ids:
+                    raise GameRuleError("A quest replay needs an earlier rewarded completion.")
+                if claim.get("xp_awarded") != 0 or claim.get("gold_awarded") != 0:
+                    raise GameRuleError("Quest replays cannot award XP or Gold.")
     timer = progress.get("timer")
     if not isinstance(timer, dict):
         raise GameRuleError("Timer data is missing.")
@@ -178,6 +216,13 @@ class GameEngine:
     def level(self) -> int:
         return level_for_xp(self.progress["xp"])
 
+    @property
+    def timer_presets(self) -> tuple[tuple[int, int, int], int]:
+        presets = self.state["profile"].get("timer_presets")
+        if presets is None:
+            return tuple(TIMER_DURATIONS), BREAK_DURATION
+        return tuple(presets["focus"]), presets["break"]
+
     def _changed(self) -> None:
         self.state["updated_at"] = now_iso()
         if self.on_change:
@@ -205,6 +250,24 @@ class GameEngine:
 
     def set_animations(self, enabled: bool) -> None:
         self.state["profile"]["animations_enabled"] = bool(enabled)
+        self._changed()
+
+    def set_custom_import_rewards(self, enabled: bool) -> None:
+        self.state["profile"]["allow_custom_import_rewards"] = bool(enabled)
+        self._changed()
+
+    def set_current_run_background(self, enabled: bool) -> None:
+        self.state["profile"]["show_current_run_background"] = bool(enabled)
+        self._changed()
+
+    def set_timer_presets(self, focus_minutes: Iterable[int], break_minutes: int) -> None:
+        focus_values = list(focus_minutes)
+        if len(focus_values) != 3:
+            raise GameRuleError("Choose exactly three focus timer values.")
+        values = focus_values + [break_minutes]
+        if any(isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1440 for value in values):
+            raise GameRuleError("Timer values must be whole minutes from 1 to 1,440.")
+        self.state["profile"]["timer_presets"] = {"focus": focus_values, "break": break_minutes}
         self._changed()
 
     def path_xp(self, path_id: str) -> int:
@@ -312,8 +375,43 @@ class GameEngine:
     def complete_quest(self, quest_id: str, evidence: str, bonus_ids: Iterable[str] = ()) -> dict:
         self._require_current("quest", quest_id)
         quest = self._find("quests", quest_id)
+        bonus_ids = list(bonus_ids)
+        previous_claims = [claim for claim in self.progress["quest_claims"] if claim["item_id"] == quest_id]
+        if previous_claims:
+            if quest.get("status") != "in_progress":
+                raise GameRuleError("This reward has already been claimed. Reset the quest before replaying it.")
+            if bonus_ids:
+                raise GameRuleError("Quest replays cannot claim bonus rewards.")
+            return self._record_quest_replay(quest, evidence)
         bonuses = self._selected_bonuses(quest, bonus_ids)
         return self._award_claim("quest", quest, evidence, bonuses)
+
+    def _record_quest_replay(self, quest: dict, evidence: str) -> dict:
+        evidence = evidence.strip()
+        if not evidence:
+            raise GameRuleError("Evidence is required before completing a replay.")
+        current_level = self.level
+        claim = {
+            "id": str(uuid4()),
+            "kind": "quest",
+            "item_id": quest["id"],
+            "path_id": quest["path_id"],
+            "completed_at": now_iso(),
+            "evidence": evidence,
+            "xp_awarded": 0,
+            "gold_awarded": 0,
+            "selected_bonuses": [],
+            "snapshot": deepcopy(quest),
+            "is_replay": True,
+            "level_before": current_level,
+            "level_after": current_level,
+        }
+        self.progress["quest_claims"].insert(0, claim)
+        quest["status"] = "completed"
+        self.progress["current_run"] = None
+        self._activity(f"Replayed quest: {quest['title']} (no additional rewards)", "quest_replayed")
+        self._changed()
+        return claim
 
     def complete_boss(
         self,
@@ -412,6 +510,109 @@ class GameEngine:
         self._activity(f"Added quest: {item['title']}", "content_added")
         self._changed()
         return item
+
+    def prepare_quest_import(self, path_id: str, quests: object) -> list[dict]:
+        """Validate and normalize a quest batch without changing player state."""
+
+        path = self._find("paths", path_id)
+        if path.get("archived"):
+            raise GameRuleError("Choose a learning path that is not archived.")
+        if not isinstance(quests, list) or not quests:
+            raise GameRuleError("The import needs at least one quest.")
+        if len(quests) > 100:
+            raise GameRuleError("A single import can contain at most 100 quests.")
+
+        custom_rewards = self.state["profile"].get("allow_custom_import_rewards", False)
+        known_keys = {
+            self._quest_import_key(item.get("stage", ""), item.get("title", ""))
+            for item in self.state["quests"]
+            if item.get("path_id") == path_id
+        }
+        prepared = []
+        for index, data in enumerate(quests, start=1):
+            prefix = f"Quest {index}"
+            if not isinstance(data, dict):
+                raise GameRuleError(f"{prefix} must be a JSON object.")
+            values = {}
+            for field, label in (
+                ("stage", "stage"),
+                ("title", "title"),
+                ("definition_of_done", "definition of done"),
+            ):
+                value = data.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise GameRuleError(f"{prefix} needs a non-empty {label}.")
+                values[field] = value.strip()
+            difficulty = data.get("difficulty")
+            if not isinstance(difficulty, str) or difficulty.strip().lower() not in {"easy", "normal", "hard"}:
+                raise GameRuleError(f"{prefix} difficulty must be easy, normal, or hard.")
+            difficulty = difficulty.strip().lower()
+            duplicate_key = self._quest_import_key(values["stage"], values["title"])
+            if duplicate_key in known_keys:
+                raise GameRuleError(f"{prefix} duplicates an existing or earlier quest in this learning path.")
+            known_keys.add(duplicate_key)
+
+            if custom_rewards:
+                try:
+                    xp = self._strict_non_negative_int(data.get("xp"), "XP")
+                    gold = self._strict_non_negative_int(data.get("gold"), "Gold")
+                    bonuses = data.get("bonuses", [])
+                    if not isinstance(bonuses, list) or any(not isinstance(bonus, dict) for bonus in bonuses):
+                        raise GameRuleError("Bonuses must be a JSON list.")
+                    for bonus in bonuses:
+                        if not isinstance(bonus.get("title"), str) or not bonus["title"].strip():
+                            raise GameRuleError("Every bonus needs a title.")
+                        self._strict_non_negative_int(bonus.get("xp"), "Bonus XP")
+                        self._strict_non_negative_int(bonus.get("gold"), "Bonus Gold")
+                    bonuses = self._normalise_bonuses(bonuses)
+                except GameRuleError as exc:
+                    raise GameRuleError(f"{prefix}: {exc}") from exc
+            else:
+                xp = DIFFICULTIES[difficulty]["xp"]
+                gold = DIFFICULTIES[difficulty]["gold"]
+                bonuses = []
+
+            prepared.append(
+                {
+                    "id": f"quest-{uuid4()}",
+                    "path_id": path_id,
+                    "stage": values["stage"],
+                    "title": values["title"],
+                    "difficulty": difficulty,
+                    "xp": xp,
+                    "gold": gold,
+                    "definition_of_done": values["definition_of_done"],
+                    "bonuses": bonuses,
+                    "status": "available",
+                    "archived": False,
+                }
+            )
+        return prepared
+
+    def import_quests(self, path_id: str, quests: object) -> list[dict]:
+        """Atomically add a fully validated batch of user-generated quests."""
+
+        prepared = self.prepare_quest_import(path_id, quests)
+        self.state["quests"].extend(prepared)
+        path = self._find("paths", path_id)
+        self._activity(f"Imported {len(prepared)} quests into {path['name']}", "content_imported")
+        self._changed()
+        return prepared
+
+    def reset_quest(self, quest_id: str) -> None:
+        quest = self._find("quests", quest_id)
+        if quest.get("archived") or quest.get("status") == "archived":
+            raise GameRuleError("Archived quests cannot be reset.")
+        if quest.get("status") not in ("in_progress", "completed"):
+            raise GameRuleError("Only in-progress or completed quests can be reset.")
+        was_completed = quest["status"] == "completed"
+        quest["status"] = "available"
+        current = self.progress.get("current_run")
+        if current and current.get("kind") == "quest" and current.get("item_id") == quest_id:
+            self.progress["current_run"] = None
+        action = "Opened quest for a reward-free replay" if was_completed else "Reset in-progress quest"
+        self._activity(f"{action}: {quest['title']}", "quest_reset")
+        self._changed()
 
     def update_quest(self, quest_id: str, data: dict) -> None:
         item = self._find("quests", quest_id)
@@ -552,6 +753,19 @@ class GameEngine:
         if number < 0:
             raise GameRuleError(f"{label} cannot be negative.")
         return number
+
+    @staticmethod
+    def _strict_non_negative_int(value: object, label: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise GameRuleError(f"{label} must be a whole number.")
+        if value < 0:
+            raise GameRuleError(f"{label} cannot be negative.")
+        return value
+
+    @staticmethod
+    def _quest_import_key(stage: object, title: object) -> tuple[str, str]:
+        normalize = lambda value: " ".join(str(value).split()).casefold()
+        return normalize(stage), normalize(title)
 
     @classmethod
     def _normalise_bonuses(cls, bonuses: Iterable[dict]) -> list[dict]:

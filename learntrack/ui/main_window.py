@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -32,7 +31,7 @@ from .screens import (
     SettingsScreen,
     ShopScreen,
 )
-from .widgets import CelebrationOverlay, FadeController
+from .widgets import CelebrationOverlay
 
 
 def _quest_board_icon() -> QIcon:
@@ -98,9 +97,6 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(210)
         nav_layout = QVBoxLayout(sidebar)
         nav_layout.setContentsMargins(0, 22, 0, 16)
-        brand = QLabel("  LEARNTRACK")
-        brand.setStyleSheet("font-size:21px;font-weight:800;color:#54e8ff;letter-spacing:2px;padding:8px 12px")
-        nav_layout.addWidget(brand)
         self.stack = QStackedWidget()
         self.screens = {
             "dashboard": DashboardScreen(self.engine),
@@ -139,7 +135,6 @@ class MainWindow(QMainWindow):
         nav_layout.addStretch()
         layout.addWidget(sidebar)
         layout.addWidget(self.stack, 1)
-        self.fade = FadeController()
         self.overlay = CelebrationOverlay(root)
         self.screens["dashboard"].navigate.connect(self.navigate)
         self.screens["quests"].completed.connect(self.celebrate)
@@ -159,7 +154,6 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(screen)
         for key, button in self.nav_buttons.items():
             button.setChecked(key == name)
-        self.fade.fade_in(screen, self.engine.state["profile"].get("animations_enabled", True))
 
     def refresh_all(self) -> None:
         for screen in self.screens.values():
