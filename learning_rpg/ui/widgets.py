@@ -1,0 +1,309 @@
+"""Reusable visual widgets and lightweight animations."""
+
+from __future__ import annotations
+
+import math
+import random
+
+from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..constants import BACKDROP_PATH
+from ..engine import next_level_progress
+
+
+class Card(QFrame):
+    def __init__(self, parent: QWidget | None = None, hero: bool = False):
+        super().__init__(parent)
+        self.setObjectName("heroCard" if hero else "card")
+
+
+class StatCard(Card):
+    def __init__(self, label: str, value: str = "0", color_name: str = "cyan"):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 13, 16, 13)
+        self.value_label = QLabel(value)
+        self.value_label.setObjectName("statValue")
+        if color_name in ("cyan", "gold", "magenta"):
+            self.value_label.setStyleSheet(
+                {"cyan": "color:#45e6ff", "gold": "color:#ffc857", "magenta": "color:#ff56c7"}[color_name]
+            )
+        caption = QLabel(label.upper())
+        caption.setObjectName("statLabel")
+        layout.addWidget(self.value_label)
+        layout.addWidget(caption)
+        self._number_animation = QVariantAnimation(self)
+        self._number_animation.setDuration(450)
+        self._number_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._number_animation.valueChanged.connect(self._show_animated_number)
+        self._number_target: int | None = None
+        self._number_suffix = ""
+
+    def set_value(self, value: object) -> None:
+        self._number_animation.stop()
+        self._number_target = None
+        self.value_label.setText(str(value))
+
+    def set_number(self, value: int, suffix: str = "", animate: bool = True) -> None:
+        value = int(value)
+        if self._number_target == value and self._number_suffix == suffix:
+            return
+        try:
+            current = int(self.value_label.text().replace(",", "").removesuffix(self._number_suffix))
+        except ValueError:
+            current = 0
+        self._number_target = value
+        self._number_suffix = suffix
+        self._number_animation.stop()
+        if not animate:
+            self._show_animated_number(value)
+            return
+        self._number_animation.setStartValue(current)
+        self._number_animation.setEndValue(value)
+        self._number_animation.start()
+
+    def _show_animated_number(self, value: object) -> None:
+        self.value_label.setText(f"{int(value):,}{self._number_suffix}")
+
+
+class AnimatedXPBar(QProgressBar):
+    def __init__(self):
+        super().__init__()
+        self._animation = QPropertyAnimation(self, b"value", self)
+        self._animation.setDuration(550)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def show_xp(self, xp: int, animate: bool = True) -> None:
+        within, span, next_level = next_level_progress(xp)
+        maximum = span or max(1, within)
+        self.setRange(0, maximum)
+        self.setFormat(
+            f"{xp:,} XP • MAX DEFINED LEVEL" if next_level is None else f"{within:,} / {span:,} XP to Level {next_level}"
+        )
+        if animate:
+            self._animation.stop()
+            self._animation.setStartValue(self.value())
+            self._animation.setEndValue(within)
+            self._animation.start()
+        else:
+            self.setValue(within)
+
+
+class BackdropPanel(QWidget):
+    """Paint the bundled art with a dark readability veil."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.pixmap = QPixmap(str(BACKDROP_PATH))
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        painter = QPainter(self)
+        if not self.pixmap.isNull():
+            scaled = self.pixmap.scaled(
+                self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
+            )
+            x = (scaled.width() - self.width()) // 2
+            y = (scaled.height() - self.height()) // 2
+            painter.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
+        painter.fillRect(self.rect(), QColor(3, 8, 17, 130))
+
+
+class CircularTimer(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(170, 170)
+        self.duration = 1
+        self.remaining = 0
+        self.mode = "focus"
+
+    def set_time(self, remaining: int, duration: int, mode: str) -> None:
+        self.remaining = max(0, remaining)
+        self.duration = max(1, duration)
+        self.mode = mode
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        side = min(self.width(), self.height()) - 18
+        rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
+        painter.setPen(QPen(QColor("#1c3047"), 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawArc(rect, 0, 360 * 16)
+        color = QColor("#ff56c7" if self.mode == "break" else "#3ee6fa")
+        painter.setPen(QPen(color, 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        span = int(360 * 16 * self.remaining / self.duration)
+        painter.drawArc(rect, 90 * 16, -span)
+        minutes, seconds = divmod(self.remaining, 60)
+        painter.setPen(QColor("#f1fbff"))
+        font = QFont(self.font())
+        font.setPointSize(24)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{minutes:02d}:{seconds:02d}")
+
+
+class TimerPanel(Card):
+    timer_saved = Signal()
+
+    def __init__(self, engine):
+        super().__init__()
+        self.engine = engine
+        self.clock = QTimer(self)
+        self.clock.setInterval(1000)
+        self.clock.timeout.connect(self._tick)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        title = QLabel("TIMER")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.dial = CircularTimer()
+        layout.addWidget(self.dial, alignment=Qt.AlignmentFlag.AlignHCenter)
+        duration_row = QHBoxLayout()
+        for minutes in (20, 25, 30):
+            button = QPushButton(f"{minutes}m")
+            button.clicked.connect(lambda checked=False, value=minutes: self.choose("focus", value))
+            duration_row.addWidget(button)
+        break_button = QPushButton("40m break")
+        break_button.clicked.connect(lambda: self.choose("break", 40))
+        duration_row.addWidget(break_button)
+        layout.addLayout(duration_row)
+        control_row = QHBoxLayout()
+        self.start_button = QPushButton("Start")
+        self.start_button.setProperty("accent", True)
+        self.start_button.clicked.connect(self.toggle)
+        reset_button = QPushButton("Reset")
+        reset_button.clicked.connect(self.reset)
+        control_row.addWidget(self.start_button)
+        control_row.addWidget(reset_button)
+        layout.addLayout(control_row)
+        self.refresh()
+
+    def refresh(self) -> None:
+        timer = self.engine.progress["timer"]
+        self.dial.set_time(timer["remaining_seconds"], timer["duration_seconds"], timer["mode"])
+        self.start_button.setText("Pause" if timer["running"] else "Start")
+        if timer["running"] and not self.clock.isActive():
+            self.clock.start()
+        elif not timer["running"]:
+            self.clock.stop()
+
+    def choose(self, mode: str, minutes: int) -> None:
+        self.clock.stop()
+        self.engine.set_timer(mode, minutes)
+        self.refresh()
+        self.timer_saved.emit()
+
+    def toggle(self) -> None:
+        timer = self.engine.progress["timer"]
+        if timer["remaining_seconds"] == 0:
+            timer["remaining_seconds"] = timer["duration_seconds"]
+        self.engine.update_timer(timer["remaining_seconds"], not timer["running"])
+        self.refresh()
+        self.timer_saved.emit()
+
+    def reset(self) -> None:
+        timer = self.engine.progress["timer"]
+        self.clock.stop()
+        self.engine.update_timer(timer["duration_seconds"], False)
+        self.refresh()
+        self.timer_saved.emit()
+
+    def _tick(self) -> None:
+        timer = self.engine.progress["timer"]
+        remaining = max(0, timer["remaining_seconds"] - 1)
+        # Save on each tick so closing at any moment preserves the remainder.
+        self.engine.update_timer(remaining, remaining > 0)
+        self.refresh()
+        if remaining == 0:
+            self.clock.stop()
+        self.timer_saved.emit()
+
+
+class FadeController:
+    """Keep the active opacity animation alive for its target widget."""
+
+    def __init__(self):
+        self.animation: QPropertyAnimation | None = None
+
+    def fade_in(self, widget: QWidget, enabled: bool) -> None:
+        if not enabled:
+            return
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        self.animation = QPropertyAnimation(effect, b"opacity", widget)
+        self.animation.setDuration(180)
+        self.animation.setStartValue(0.35)
+        self.animation.setEndValue(1.0)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.animation.finished.connect(lambda: widget.setGraphicsEffect(None))
+        self.animation.start()
+
+
+class CelebrationOverlay(QWidget):
+    """Short code-drawn particle burst for quest and level completion."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._particles: list[dict] = []
+        self.timer = QTimer(self)
+        self.timer.setInterval(16)
+        self.timer.timeout.connect(self._advance)
+        self.hide()
+
+    def burst(self, level_up: bool = False) -> None:
+        self.setGeometry(self.parentWidget().rect())
+        center = QPointF(self.width() / 2, self.height() / 2)
+        colors = [QColor("#43e8ff"), QColor("#ff56c7"), QColor("#ffc857")]
+        count = 65 if level_up else 38
+        self._particles = []
+        for _ in range(count):
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(2.0, 7.0)
+            self._particles.append(
+                {
+                    "pos": QPointF(center),
+                    "vel": QPointF(math.cos(angle) * speed, math.sin(angle) * speed - 2),
+                    "life": random.randint(32, 62),
+                    "color": random.choice(colors),
+                    "size": random.uniform(2.5, 6.5),
+                }
+            )
+        self.show()
+        self.raise_()
+        self.timer.start()
+
+    def _advance(self) -> None:
+        for particle in self._particles:
+            particle["pos"] += particle["vel"]
+            particle["vel"].setY(particle["vel"].y() + 0.11)
+            particle["life"] -= 1
+        self._particles = [particle for particle in self._particles if particle["life"] > 0]
+        if not self._particles:
+            self.timer.stop()
+            self.hide()
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for particle in self._particles:
+            color = QColor(particle["color"])
+            color.setAlpha(min(255, particle["life"] * 6))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            size = particle["size"]
+            painter.drawEllipse(particle["pos"], size, size)
