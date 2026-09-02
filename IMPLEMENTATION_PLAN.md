@@ -1,12 +1,12 @@
-# Learning RPG Desktop Tracker — Implementation Plan
+# LearnTrack Desktop Tracker — Implementation Plan
 
 ## Summary
 
-Create a polished, resizable PySide6 desktop game launched with `python3 main.py`. It will turn `Learning_RPG.md` into a dark cyber-RPG learning tracker with editable quests, evidence-based completion, XP, Gold, levels, bosses, rewards, focus timers, and persistent progress.
+Create a polished, resizable PySide6 desktop game launched with `python3 main.py`. It will turn `LearnTrack.md` into a dark cyber-RPG learning tracker with editable quests, evidence-based completion, XP, Gold, levels, bosses, rewards, focus timers, and persistent progress.
 
 ## Implementation Changes
 
-- Build a modular PySide6 application with a root `main.py`, an internal `learning_rpg` package, bundled assets/default data, and a `requirements.txt` using PySide6 6.11+.
+- Build a modular PySide6 application with a root `main.py`, an internal `learntrack` package, bundled assets/default data, and a `requirements.txt` using PySide6 6.11+.
 - Add a first-run profile setup requesting only the player's name; allow changing it later.
 - Create these screens:
   - Dashboard: level, animated XP bar, Gold, active path, current quest, timer, recent activity, and quick actions.
@@ -52,7 +52,7 @@ Create a polished, resizable PySide6 desktop game launched with `python3 main.py
 ## Assumptions
 
 - V1 is a single-player offline desktop tracker.
-- `Learning_RPG.md` remains an unchanged design reference; gameplay writes only to JSON.
+- `LearnTrack.md` remains the design reference; gameplay writes only to JSON.
 - Adventure maps, combat, quizzes, automated project-file verification, cloud sync, accounts, music, and sound effects are reserved for future versions.
 - Level 10 remains the highest defined level. Additional XP is retained and displayed, but no new thresholds are invented.
 - The current local environment—Python 3.14.6 with PySide6/Qt 6.11.1—is the primary target.

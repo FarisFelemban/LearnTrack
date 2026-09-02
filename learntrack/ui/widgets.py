@@ -5,13 +5,15 @@ from __future__ import annotations
 import math
 import random
 
-from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPointF, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -121,18 +123,98 @@ class BackdropPanel(QWidget):
 
 
 class CircularTimer(QWidget):
+    edit_requested = Signal()
+    outside_clicked = Signal()
+    value_submitted = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setMinimumSize(170, 170)
+        self.setAccessibleName("Timer countdown")
+        self.setAccessibleDescription("Click the time to edit it in minutes and seconds")
         self.duration = 1
         self.remaining = 0
         self.mode = "focus"
+        self.editor = QLineEdit(self)
+        self.editor.setObjectName("timerEditor")
+        self.editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.editor.setMaxLength(8)
+        self.editor.setToolTip("Enter minutes:seconds, for example 45:00")
+        self.editor.installEventFilter(self)
+        self.editor.returnPressed.connect(self._submit_edit)
+        self.editor.editingFinished.connect(self._submit_edit)
+        self.editor.hide()
 
     def set_time(self, remaining: int, duration: int, mode: str) -> None:
         self.remaining = max(0, remaining)
         self.duration = max(1, duration)
         self.mode = mode
         self.update()
+
+    def _text_rect(self) -> QRect:
+        return QRect((self.width() - 124) // 2, (self.height() - 52) // 2, 124, 52)
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt API
+        self.editor.setGeometry(self._text_rect())
+        super().resizeEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 - Qt API
+        if event.button() == Qt.MouseButton.LeftButton and self._text_rect().contains(event.position().toPoint()):
+            self.edit_requested.emit()
+        super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802 - Qt API
+        cursor = (
+            Qt.CursorShape.PointingHandCursor
+            if self._text_rect().contains(event.position().toPoint())
+            else Qt.CursorShape.ArrowCursor
+        )
+        self.setCursor(cursor)
+        super().mouseMoveEvent(event)
+
+    def enter_edit_mode(self) -> None:
+        minutes, seconds = divmod(self.remaining, 60)
+        self.editor.setProperty("invalid", False)
+        self.editor.style().unpolish(self.editor)
+        self.editor.style().polish(self.editor)
+        self.editor.setToolTip("Enter minutes:seconds, for example 45:00")
+        self.editor.setText(f"{minutes:02d}:{seconds:02d}")
+        self.editor.show()
+        self.editor.setFocus()
+        self.editor.selectAll()
+        QApplication.instance().installEventFilter(self)
+        self.update()
+
+    def leave_edit_mode(self) -> None:
+        application = QApplication.instance()
+        if application is not None:
+            application.removeEventFilter(self)
+        self.editor.hide()
+        self.update()
+
+    def show_edit_error(self) -> None:
+        self.editor.setProperty("invalid", True)
+        self.editor.style().unpolish(self.editor)
+        self.editor.style().polish(self.editor)
+        self.editor.setToolTip("Use minutes:seconds (for example 45:00). Seconds must be 00–59.")
+        self.editor.setFocus()
+        self.editor.selectAll()
+
+    def _submit_edit(self) -> None:
+        if not self.editor.isHidden():
+            self.value_submitted.emit(self.editor.text())
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt API
+        if watched is self.editor and event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self.leave_edit_mode()
+            return True
+        if not self.editor.isHidden() and event.type() == QEvent.Type.MouseButtonPress:
+            clicked_inside_editor = watched is self.editor or (
+                isinstance(watched, QWidget) and self.editor.isAncestorOf(watched)
+            )
+            if not clicked_inside_editor:
+                self.outside_clicked.emit()
+        return super().eventFilter(watched, event)
 
     def paintEvent(self, event):  # noqa: N802 - Qt API
         painter = QPainter(self)
@@ -151,7 +233,8 @@ class CircularTimer(QWidget):
         font.setPointSize(24)
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{minutes:02d}:{seconds:02d}")
+        if not self.editor.isVisible():
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{minutes:02d}:{seconds:02d}")
 
 
 class TimerPanel(Card):
@@ -169,6 +252,10 @@ class TimerPanel(Card):
         title.setObjectName("sectionTitle")
         layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.dial = CircularTimer()
+        self.dial.setMouseTracking(True)
+        self.dial.edit_requested.connect(self.begin_duration_edit)
+        self.dial.outside_clicked.connect(self.finish_duration_edit)
+        self.dial.value_submitted.connect(self.apply_edited_duration)
         layout.addWidget(self.dial, alignment=Qt.AlignmentFlag.AlignHCenter)
         duration_row = QHBoxLayout()
         for minutes in (20, 25, 30):
@@ -202,6 +289,48 @@ class TimerPanel(Card):
     def choose(self, mode: str, minutes: int) -> None:
         self.clock.stop()
         self.engine.set_timer(mode, minutes)
+        self.refresh()
+        self.timer_saved.emit()
+
+    def begin_duration_edit(self) -> None:
+        timer = self.engine.progress["timer"]
+        self.clock.stop()
+        self.engine.update_timer(timer["remaining_seconds"], False)
+        self.timer_saved.emit()
+        self.dial.enter_edit_mode()
+
+    def finish_duration_edit(self) -> None:
+        self.apply_edited_duration(self.dial.editor.text(), discard_invalid=True)
+
+    def apply_edited_duration(self, text: str, discard_invalid: bool = False) -> None:
+        parts = text.strip().split(":")
+        try:
+            if len(parts) == 1:
+                total_seconds = int(parts[0]) * 60
+            elif len(parts) == 2:
+                minutes, seconds = (int(part) for part in parts)
+                if not 0 <= seconds < 60:
+                    raise ValueError
+                total_seconds = minutes * 60 + seconds
+            else:
+                raise ValueError
+        except ValueError:
+            if discard_invalid:
+                self.dial.leave_edit_mode()
+                self.refresh()
+                return
+            self.dial.show_edit_error()
+            return
+        if not 1 <= total_seconds <= 24 * 60 * 60:
+            if discard_invalid:
+                self.dial.leave_edit_mode()
+                self.refresh()
+                return
+            self.dial.show_edit_error()
+            return
+        mode = self.engine.progress["timer"]["mode"]
+        self.engine.set_timer_seconds(mode, total_seconds)
+        self.dial.leave_edit_mode()
         self.refresh()
         self.timer_saved.emit()
 

@@ -1,9 +1,9 @@
 from copy import deepcopy
 import unittest
 
-from learning_rpg.constants import LEVEL_THRESHOLDS
-from learning_rpg.defaults import create_default_state
-from learning_rpg.engine import GameEngine, GameRuleError, level_for_xp, next_level_progress, validate_state
+from learntrack.constants import LEVEL_THRESHOLDS
+from learntrack.defaults import create_default_state
+from learntrack.engine import GameEngine, GameRuleError, level_for_xp, next_level_progress, validate_state
 
 
 class LevelTests(unittest.TestCase):

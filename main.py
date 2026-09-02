@@ -1,6 +1,6 @@
-"""Launch Learning RPG with `python3 main.py`."""
+"""Launch LearnTrack with `python3 main.py`."""
 
-from learning_rpg.app import run
+from learntrack.app import run
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Learning RPG desktop tracker."""
+"""LearnTrack desktop learning tracker."""
 
 from .engine import GameEngine, GameRuleError
 from .storage import SaveCorruptionError, SaveManager

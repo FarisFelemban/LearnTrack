@@ -36,6 +36,31 @@ class SaveManager:
     def exists(self) -> bool:
         return self.path.exists()
 
+    def migrate_from(self, legacy_path: str | Path) -> bool:
+        """Copy a legacy save into this manager's location without removing it."""
+        legacy_path = Path(legacy_path).expanduser().resolve()
+        if self.exists or not legacy_path.exists() or legacy_path == self.path:
+            return False
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "wb",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.migration-",
+                suffix=".tmp",
+                delete=False,
+            ) as destination, legacy_path.open("rb") as source:
+                temp_path = Path(destination.name)
+                shutil.copyfileobj(source, destination)
+                destination.flush()
+                os.fsync(destination.fileno())
+            os.replace(temp_path, self.path)
+            return True
+        finally:
+            if temp_path and temp_path.exists():
+                temp_path.unlink()
+
     def load(self) -> dict | None:
         if not self.path.exists():
             return None
@@ -93,7 +118,7 @@ class SaveManager:
             state["progress"]["timer"]["running"] = False
             return state
         except (OSError, json.JSONDecodeError, GameRuleError, TypeError, KeyError) as exc:
-            raise GameRuleError(f"This file is not a valid Learning RPG save: {exc}") from exc
+            raise GameRuleError(f"This file is not a valid LearnTrack save: {exc}") from exc
 
     def replace_with_import(self, state: dict) -> Path | None:
         validate_state(state)

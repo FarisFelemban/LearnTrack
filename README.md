@@ -1,4 +1,4 @@
-# Learning RPG
+# LearnTrack
 
 A single-player, offline desktop game that turns software-engineering learning into small, evidence-based quests. It was made specifically for Faris.
 
@@ -23,7 +23,7 @@ On the first run, the game asks only for your player name. Progress saves automa
 ## Included gameplay
 
 - Dashboard with level progress, current run, activity, and 20/25/30-minute focus timers or a 40-minute break timer
-- Filterable Quest Board with the complete FastAPI quest line from `Learning_RPG.md`
+- Filterable Quest Board with the complete FastAPI quest line from `LearnTrack.md`
 - Editable learning paths, quests, bonuses, bosses, requirements, and shop rewards
 - Evidence and confirmation before claims, mandatory boss checklists, and duplicate-claim protection
 - Repeatable shop purchases with Level and Gold checks
@@ -40,4 +40,4 @@ The automated tests use Python's built-in test runner. Qt runs offscreen, so the
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-`Learning_RPG.md` remains the unchanged design reference. Player activity is written only to the local JSON save.
+`LearnTrack.md` remains the design reference. Player activity is written only to the local JSON save.

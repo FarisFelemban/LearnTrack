@@ -3,6 +3,10 @@
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+APPLICATION_NAME = "LearnTrack"
+ORGANIZATION_NAME = "LearnTrack"
+LEGACY_APPLICATION_NAME = "LearningRPG"
+LEGACY_ORGANIZATION_NAME = "LearningGuild"
 
 LEVEL_THRESHOLDS = {
     1: 0,
@@ -32,3 +36,12 @@ BREAK_DURATION = 40
 PACKAGE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = PACKAGE_DIR / "assets"
 BACKDROP_PATH = ASSET_DIR / "cyber_guild_backdrop.png"
+FONT_PATHS = tuple(
+    ASSET_DIR / "fonts" / filename
+    for filename in (
+        "Inter-Regular.ttf",
+        "Inter-Medium.ttf",
+        "Inter-SemiBold.ttf",
+        "Inter-Bold.ttf",
+    )
+)

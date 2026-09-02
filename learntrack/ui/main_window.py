@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -34,12 +35,57 @@ from .screens import (
 from .widgets import CelebrationOverlay, FadeController
 
 
+def _quest_board_icon() -> QIcon:
+    """Draw a board containing two wavy list lines."""
+
+    def draw(color: str) -> QPixmap:
+        pixmap = QPixmap(22, 22)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 1.7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawRoundedRect(QRectF(2.5, 3.5, 17, 15), 2, 2)
+        for y in (8.5, 13.5):
+            wave = QPainterPath(QPointF(5.5, y))
+            wave.cubicTo(7, y - 1.5, 8.5, y + 1.5, 10, y)
+            wave.cubicTo(11.5, y - 1.5, 13, y + 1.5, 14.5, y)
+            wave.cubicTo(15.3, y - 0.7, 16, y - 0.5, 16.5, y)
+            painter.drawPath(wave)
+        painter.end()
+        return pixmap
+
+    icon = QIcon()
+    icon.addPixmap(draw("#89a3b9"), QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(draw("#58e8ff"), QIcon.Mode.Normal, QIcon.State.On)
+    return icon
+
+
+def _hamburger_icon() -> QIcon:
+    """Draw the familiar three-line menu icon without relying on a font glyph."""
+
+    def draw(color: str) -> QPixmap:
+        pixmap = QPixmap(22, 22)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for y in (6, 11, 16):
+            painter.drawLine(QPointF(3.5, y), QPointF(18.5, y))
+        painter.end()
+        return pixmap
+
+    icon = QIcon()
+    icon.addPixmap(draw("#89a3b9"), QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(draw("#58e8ff"), QIcon.Mode.Normal, QIcon.State.On)
+    return icon
+
+
 class MainWindow(QMainWindow):
     def __init__(self, state: dict, storage: SaveManager):
         super().__init__()
         self.storage = storage
         self.engine = GameEngine(state, self._autosave)
-        self.setWindowTitle("Learning RPG")
+        self.setWindowTitle("LearnTrack")
         self.setMinimumSize(980, 680)
         self.resize(1280, 820)
         root = QWidget()
@@ -52,13 +98,9 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(210)
         nav_layout = QVBoxLayout(sidebar)
         nav_layout.setContentsMargins(0, 22, 0, 16)
-        brand = QLabel("  LEARNING\n  RPG")
+        brand = QLabel("  LEARNTRACK")
         brand.setStyleSheet("font-size:21px;font-weight:800;color:#54e8ff;letter-spacing:2px;padding:8px 12px")
         nav_layout.addWidget(brand)
-        tagline = QLabel("  EVIDENCE EARNS POWER")
-        tagline.setObjectName("muted")
-        tagline.setStyleSheet("font-size:9px;color:#6d8398;padding:0 12px 18px 12px")
-        nav_layout.addWidget(tagline)
         self.stack = QStackedWidget()
         self.screens = {
             "dashboard": DashboardScreen(self.engine),
@@ -72,27 +114,29 @@ class MainWindow(QMainWindow):
         self.nav_buttons: dict[str, QPushButton] = {}
         labels = {
             "dashboard": "◈  Dashboard",
-            "quests": "◇  Quest Board",
+            "quests": "Quest Board",
             "paths": "⌁  Learning Paths",
             "bosses": "◆  Bosses",
             "shop": "◉  Reward Shop",
             "journal": "▤  Journal / Profile",
-            "settings": "⚙  Settings",
+            "settings": "Settings",
         }
         for key, screen in self.screens.items():
             self.stack.addWidget(screen)
             button = QPushButton(labels[key])
             button.setObjectName("navButton")
             button.setCheckable(True)
+            if key == "quests":
+                button.setIcon(_quest_board_icon())
+                button.setIconSize(QSize(19, 19))
+            elif key == "settings":
+                button.setIcon(_hamburger_icon())
+                button.setIconSize(QSize(19, 19))
             button.clicked.connect(lambda checked=False, name=key: self.navigate(name))
             self.nav_buttons[key] = button
             nav_layout.addWidget(button)
             screen.changed.connect(self.refresh_all)
         nav_layout.addStretch()
-        footer = QLabel("  Learn → Recall\n  Practice → Build")
-        footer.setObjectName("muted")
-        footer.setStyleSheet("padding:12px;line-height:1.5")
-        nav_layout.addWidget(footer)
         layout.addWidget(sidebar)
         layout.addWidget(self.stack, 1)
         self.fade = FadeController()
@@ -137,8 +181,8 @@ class MainWindow(QMainWindow):
 
     def export_save(self) -> None:
         safe_name = "".join(character if character.isalnum() else "-" for character in self.engine.state["profile"]["player_name"]).strip("-")
-        suggested = str(Path.home() / f"learning-rpg-{safe_name or 'player'}-{datetime.now():%Y-%m-%d}.json")
-        destination, _ = QFileDialog.getSaveFileName(self, "Export Learning RPG save", suggested, "JSON files (*.json)")
+        suggested = str(Path.home() / f"learntrack-{safe_name or 'player'}-{datetime.now():%Y-%m-%d}.json")
+        destination, _ = QFileDialog.getSaveFileName(self, "Export LearnTrack save", suggested, "JSON files (*.json)")
         if not destination:
             return
         try:
@@ -148,7 +192,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export failed", str(exc))
 
     def import_save(self) -> None:
-        source, _ = QFileDialog.getOpenFileName(self, "Import Learning RPG save", str(Path.home()), "JSON files (*.json)")
+        source, _ = QFileDialog.getOpenFileName(self, "Import LearnTrack save", str(Path.home()), "JSON files (*.json)")
         if not source:
             return
         try:

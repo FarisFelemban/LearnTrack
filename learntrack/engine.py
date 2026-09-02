@@ -1,4 +1,4 @@
-"""Pure game rules for Learning RPG.
+"""Pure game rules for LearnTrack.
 
 The UI only asks this class to perform actions; reward and history rules live
 here so they can be tested without opening a window.
@@ -506,7 +506,11 @@ class GameEngine:
     def set_timer(self, mode: str, minutes: int) -> None:
         if mode not in ("focus", "break") or minutes <= 0:
             raise GameRuleError("Choose a valid timer mode and duration.")
-        seconds = int(minutes * 60)
+        self.set_timer_seconds(mode, int(minutes * 60))
+
+    def set_timer_seconds(self, mode: str, seconds: int) -> None:
+        if mode not in ("focus", "break") or not isinstance(seconds, int) or seconds <= 0:
+            raise GameRuleError("Choose a valid timer mode and duration.")
         self.progress["timer"] = {
             "mode": mode,
             "duration_seconds": seconds,

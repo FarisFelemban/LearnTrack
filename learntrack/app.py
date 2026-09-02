@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtCore import QCoreApplication, QStandardPaths, Qt
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
+from .constants import (
+    APPLICATION_NAME,
+    FONT_PATHS,
+    LEGACY_APPLICATION_NAME,
+    LEGACY_ORGANIZATION_NAME,
+    ORGANIZATION_NAME,
+)
 from .defaults import create_default_state
 from .storage import SaveCorruptionError, SaveManager
 from .ui.dialogs import NameSetupDialog
@@ -15,16 +24,37 @@ from .ui.theme import APP_STYLE
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:
-    QCoreApplication.setOrganizationName("LearningGuild")
-    QCoreApplication.setApplicationName("LearningRPG")
+    # Resolve the old location before switching Qt to LearnTrack's new identity.
+    QCoreApplication.setOrganizationName(LEGACY_ORGANIZATION_NAME)
+    QCoreApplication.setApplicationName(LEGACY_APPLICATION_NAME)
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
-    app.setApplicationDisplayName("Learning RPG")
+    legacy_save_path = Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)) / "progress.json"
+    QCoreApplication.setOrganizationName(ORGANIZATION_NAME)
+    QCoreApplication.setApplicationName(APPLICATION_NAME)
+    app.setProperty("legacySavePath", str(legacy_save_path))
+    for font_path in FONT_PATHS:
+        QFontDatabase.addApplicationFont(str(font_path))
+    app.setApplicationDisplayName("LearnTrack")
     app.setStyle("Fusion")
+    application_font = QFont()
+    application_font.setFamilies(["Inter", "Segoe UI Symbol"])
+    app.setFont(application_font)
     app.setStyleSheet(APP_STYLE)
     return app
 
 
-def load_or_create_state(storage: SaveManager, parent=None) -> dict | None:
+def load_or_create_state(storage: SaveManager, parent=None, legacy_save_path: str | Path | None = None) -> dict | None:
+    if legacy_save_path is not None:
+        try:
+            storage.migrate_from(legacy_save_path)
+        except OSError as exc:
+            QMessageBox.critical(
+                parent,
+                "Progress migration failed",
+                "LearnTrack could not copy your existing Learning RPG progress. "
+                f"The original save has not been removed.\n\n{exc}",
+            )
+            return None
     try:
         state = storage.load()
     except SaveCorruptionError as exc:
@@ -53,7 +83,7 @@ def load_or_create_state(storage: SaveManager, parent=None) -> dict | None:
 def run() -> int:
     app = create_application()
     storage = SaveManager()
-    state = load_or_create_state(storage)
+    state = load_or_create_state(storage, legacy_save_path=app.property("legacySavePath"))
     if state is None:
         return 0
     window = MainWindow(state, storage)

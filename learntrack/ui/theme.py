@@ -3,7 +3,7 @@
 APP_STYLE = """
 QWidget {
     color: #e8f4ff;
-    font-family: "Avenir Next", "Inter", "Helvetica Neue", sans-serif;
+    font-family: "Inter", "Segoe UI Symbol";
     font-size: 13px;
 }
 QMainWindow, QDialog, QStackedWidget { background-color: #070b14; }
@@ -84,6 +84,35 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBo
 }
 QTextBrowser { background: transparent; }
 QComboBox::drop-down { border: 0; width: 24px; }
+QComboBox QAbstractItemView {
+    color: #e8f4ff;
+    background-color: #0d1726;
+    border: 1px solid #29445f;
+    selection-color: #ffffff;
+    selection-background-color: #164f6b;
+    outline: 0;
+}
+QComboBox QAbstractItemView::item {
+    color: #e8f4ff;
+    background-color: #0d1726;
+    min-height: 28px;
+    padding: 4px 8px;
+}
+QComboBox QAbstractItemView::item:selected {
+    color: #ffffff;
+    background-color: #164f6b;
+}
+QLineEdit#timerEditor {
+    color: #f1fbff;
+    background-color: #07111f;
+    border: 1px solid #3ee6fa;
+    border-radius: 8px;
+    padding: 3px;
+    font-size: 24px;
+    font-weight: 600;
+    selection-background-color: #167b98;
+}
+QLineEdit#timerEditor[invalid="true"] { border-color: #ff637e; }
 QListWidget, QTreeWidget, QTableWidget {
     background-color: #0a111e;
     alternate-background-color: #0d1725;

@@ -3,9 +3,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from learning_rpg.defaults import create_default_state
-from learning_rpg.engine import GameEngine, GameRuleError
-from learning_rpg.storage import SaveCorruptionError, SaveManager
+from learntrack.defaults import create_default_state
+from learntrack.engine import GameEngine, GameRuleError
+from learntrack.storage import SaveCorruptionError, SaveManager
 
 
 class StorageTests(unittest.TestCase):
@@ -26,6 +26,24 @@ class StorageTests(unittest.TestCase):
         loaded = self.storage.load()
         self.assertEqual(loaded["profile"]["player_name"], "Faris")
         self.assertEqual(loaded["progress"]["quest_claims"][0]["evidence"], "Explained routes.")
+
+    def test_legacy_save_is_copied_without_removing_original(self):
+        legacy_path = Path(self.temp.name) / "LearningRPG" / "progress.json"
+        legacy_storage = SaveManager(legacy_path)
+        legacy_storage.save(create_default_state("Legacy Player"))
+
+        self.assertTrue(self.storage.migrate_from(legacy_path))
+
+        self.assertTrue(legacy_path.exists())
+        self.assertEqual(self.storage.load()["profile"]["player_name"], "Legacy Player")
+
+    def test_legacy_save_never_overwrites_existing_learntrack_save(self):
+        legacy_path = Path(self.temp.name) / "LearningRPG" / "progress.json"
+        SaveManager(legacy_path).save(create_default_state("Legacy Player"))
+        self.storage.save(create_default_state("Current Player"))
+
+        self.assertFalse(self.storage.migrate_from(legacy_path))
+        self.assertEqual(self.storage.load()["profile"]["player_name"], "Current Player")
 
     def test_timer_restores_paused_with_remaining_time(self):
         state = create_default_state()
