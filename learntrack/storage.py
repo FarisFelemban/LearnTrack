@@ -9,7 +9,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
+from PySide6.QtCore import QSettings, QStandardPaths
 
 from .defaults import create_default_state
 from .engine import GameRuleError, validate_state
@@ -30,6 +30,8 @@ class SaveConflictError(RuntimeError):
 class SaveManager:
     """Own the local save location and all file replacement operations."""
 
+    SYNC_PATH_SETTING = "save_data/progress_path"
+
     def __init__(self, save_path: str | Path | None = None):
         if save_path is None:
             root = Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))
@@ -41,6 +43,19 @@ class SaveManager:
     @property
     def exists(self) -> bool:
         return self.path.exists()
+
+    @classmethod
+    def configured_path(cls) -> Path | None:
+        """Return the user-selected save path, if one has been configured."""
+        value = QSettings().value(cls.SYNC_PATH_SETTING)
+        return Path(value).expanduser().resolve() if isinstance(value, str) and value else None
+
+    @classmethod
+    def remember_path(cls, path: str | Path) -> None:
+        """Remember a chosen save path without putting device settings in progress.json."""
+        settings = QSettings()
+        settings.setValue(cls.SYNC_PATH_SETTING, str(Path(path).expanduser().resolve()))
+        settings.sync()
 
     @property
     def last_updated(self) -> datetime | None:

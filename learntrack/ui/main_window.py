@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..defaults import create_default_state
 from ..engine import GameEngine, GameRuleError
-from ..storage import SaveConflictError, SaveManager
+from ..storage import SaveConflictError, SaveCorruptionError, SaveManager
 from .screens import (
     BossesScreen,
     DashboardScreen,
@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         settings.export_requested.connect(self.export_save)
         settings.import_requested.connect(self.import_save)
         settings.reset_requested.connect(self.reset_save)
+        settings.sync_folder_requested.connect(self.choose_sync_folder)
         self.navigate("dashboard")
         self.refresh_all()
 
@@ -194,7 +195,57 @@ class MainWindow(QMainWindow):
             status = "No progress save has been created yet."
         else:
             status = f"Last saved: {updated:%b %d, %Y at %I:%M %p}"
-        self.screens["settings"].set_save_status(status, self.storage.session_backup)
+        self.screens["settings"].set_save_status(status, self.storage.path, self.storage.session_backup)
+
+    def choose_sync_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Dropbox, Google Drive, or another synced folder",
+            str(self.storage.path.parent),
+        )
+        if not folder:
+            return
+        destination = Path(folder).expanduser().resolve() / "progress.json"
+        if destination == self.storage.path:
+            QMessageBox.information(self, "Sync folder unchanged", "LearnTrack already saves in this folder.")
+            return
+        synced_storage = SaveManager(destination)
+        if synced_storage.exists:
+            try:
+                synced_state = synced_storage.load()
+            except SaveCorruptionError as exc:
+                QMessageBox.warning(self, "Synced save could not be used", str(exc))
+                return
+            answer = QMessageBox.warning(
+                self,
+                "Use existing synced progress?",
+                "This folder already contains a LearnTrack save. Use that shared progress on this device?\n\n"
+                "Your current device save will remain in its old location as a backup.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self.storage = synced_storage
+            self.engine.state = synced_state
+            self._saving_paused_reason = None
+            SaveManager.remember_path(destination)
+            self.refresh_all()
+            QMessageBox.information(self, "Synced save selected", f"LearnTrack now uses:\n{destination}")
+            return
+        try:
+            synced_storage.save(self.engine.state)
+            self.storage = synced_storage
+            self._saving_paused_reason = None
+            SaveManager.remember_path(destination)
+            self.refresh_all()
+            QMessageBox.information(
+                self,
+                "Synced save selected",
+                f"Your progress was copied to:\n{destination}\n\nThe original local save was kept as a backup.",
+            )
+        except (OSError, GameRuleError, SaveConflictError) as exc:
+            QMessageBox.warning(self, "Could not choose synced folder", str(exc))
 
     def export_save(self) -> None:
         safe_name = "".join(character if character.isalnum() else "-" for character in self.engine.state["profile"]["player_name"]).strip("-")

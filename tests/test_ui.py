@@ -261,6 +261,38 @@ class UISmokeTests(unittest.TestCase):
     def test_settings_shows_save_status(self):
         settings = self.window.screens["settings"]
         self.assertIn("Last saved:", settings.save_status.text())
+        self.assertIn(str(self.storage.path), settings.save_status.text())
+
+    def test_choose_empty_sync_folder_copies_current_progress(self):
+        sync_folder = Path(self.temp.name) / "Google Drive" / "LearnTrack"
+        sync_folder.mkdir(parents=True)
+        destination = sync_folder / "progress.json"
+        with (
+            patch("learntrack.ui.main_window.QFileDialog.getExistingDirectory", return_value=str(sync_folder)),
+            patch("learntrack.ui.main_window.QMessageBox.information"),
+            patch("learntrack.ui.main_window.SaveManager.remember_path"),
+        ):
+            self.window.choose_sync_folder()
+
+        self.assertEqual(self.window.storage.path, destination.resolve())
+        self.assertTrue(destination.exists())
+        self.assertEqual(self.window.storage.load()["profile"]["player_name"], "UI Tester")
+
+    def test_choose_existing_sync_folder_uses_shared_progress(self):
+        sync_folder = Path(self.temp.name) / "Google Drive" / "LearnTrack"
+        sync_folder.mkdir(parents=True)
+        destination = sync_folder / "progress.json"
+        SaveManager(destination).save(create_default_state("Shared Player"))
+        with (
+            patch("learntrack.ui.main_window.QFileDialog.getExistingDirectory", return_value=str(sync_folder)),
+            patch("learntrack.ui.main_window.QMessageBox.warning", return_value=QMessageBox.StandardButton.Yes),
+            patch("learntrack.ui.main_window.QMessageBox.information"),
+            patch("learntrack.ui.main_window.SaveManager.remember_path"),
+        ):
+            self.window.choose_sync_folder()
+
+        self.assertEqual(self.window.storage.path, destination.resolve())
+        self.assertEqual(self.window.engine.state["profile"]["player_name"], "Shared Player")
 
     def test_navigation_uses_requested_menu_icons(self):
         self.assertEqual(self.window.nav_buttons["settings"].text(), "Settings")

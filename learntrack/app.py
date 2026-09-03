@@ -87,7 +87,7 @@ def load_or_create_state(storage: SaveManager, parent=None, legacy_save_path: st
 
 def run() -> int:
     app = create_application()
-    storage = SaveManager()
+    storage = SaveManager(SaveManager.configured_path())
     state = load_or_create_state(storage, legacy_save_path=app.property("legacySavePath"))
     if state is None:
         return 0

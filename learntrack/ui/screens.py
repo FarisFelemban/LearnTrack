@@ -957,6 +957,7 @@ class SettingsScreen(Page):
     export_requested = Signal()
     import_requested = Signal()
     reset_requested = Signal()
+    sync_folder_requested = Signal()
 
     def __init__(self, engine):
         super().__init__(engine)
@@ -1015,6 +1016,8 @@ class SettingsScreen(Page):
         self.save_status.setWordWrap(True)
         layout.addWidget(self.save_status)
         row = QHBoxLayout()
+        sync_folder = QPushButton("Choose synced save folder…")
+        sync_folder.clicked.connect(self.sync_folder_requested)
         export = QPushButton("Export save…")
         export.clicked.connect(self.export_requested)
         import_button = QPushButton("Import save…")
@@ -1022,7 +1025,7 @@ class SettingsScreen(Page):
         reset = QPushButton("Reset all progress…")
         reset.setProperty("danger", True)
         reset.clicked.connect(self.reset_requested)
-        row.addWidget(export); row.addWidget(import_button); row.addStretch(); row.addWidget(reset)
+        row.addWidget(sync_folder); row.addWidget(export); row.addWidget(import_button); row.addStretch(); row.addWidget(reset)
         layout.addLayout(row)
         outer.addWidget(data)
         about = Card()
@@ -1051,9 +1054,10 @@ class SettingsScreen(Page):
         )
         self.custom_import_rewards.blockSignals(False)
 
-    def set_save_status(self, status: str, backup_path=None) -> None:
+    def set_save_status(self, status: str, save_path, backup_path=None) -> None:
+        location_detail = f"Save file: {save_path}"
         backup_detail = f"\nAutomatic restore point: {backup_path}" if backup_path else ""
-        self.save_status.setText(status + backup_detail)
+        self.save_status.setText(status + "\n" + location_detail + backup_detail)
 
     def save_name(self) -> None:
         try:

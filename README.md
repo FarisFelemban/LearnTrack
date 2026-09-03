@@ -18,7 +18,7 @@ Then launch the game:
 python3 main.py
 ```
 
-On the first run, the game asks only for your player name. Progress saves automatically after every meaningful change in the operating system's normal application-data folder. A running timer is restored paused after relaunch.
+On the first run, the game asks only for your player name. Progress saves automatically after every meaningful change in the operating system's normal application-data folder. In **Settings → Save Data**, you can choose a shared Dropbox or Google Drive folder; LearnTrack then saves `progress.json` in that folder and remembers the choice on that device. A running timer is restored paused after relaunch.
 
 ## Included gameplay
 
