@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..defaults import create_default_state
 from ..engine import GameEngine, GameRuleError
-from ..storage import SaveManager
+from ..storage import SaveConflictError, SaveManager
 from .screens import (
     BossesScreen,
     DashboardScreen,
@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
     def __init__(self, state: dict, storage: SaveManager):
         super().__init__()
         self.storage = storage
+        self._saving_paused_reason: str | None = None
         self.engine = GameEngine(state, self._autosave)
         self.setWindowTitle("LearnTrack")
         self.setMinimumSize(980, 680)
@@ -158,20 +159,42 @@ class MainWindow(QMainWindow):
     def refresh_all(self) -> None:
         for screen in self.screens.values():
             screen.refresh()
+        self._refresh_save_status()
 
     def celebrate(self, level_up: bool) -> None:
         if self.engine.state["profile"].get("animations_enabled", True):
             self.overlay.burst(level_up)
 
     def _autosave(self, state: dict) -> None:
+        if self._saving_paused_reason:
+            return
         try:
             self.storage.save(state)
+            self._refresh_save_status()
+        except SaveConflictError as exc:
+            self._saving_paused_reason = str(exc)
+            self._refresh_save_status()
+            QMessageBox.warning(
+                self,
+                "Cloud save needs attention",
+                f"{exc}\n\nNo changes were written. Export your current in-app progress before resolving the conflict.",
+            )
         except OSError as exc:
             QMessageBox.critical(
                 self,
                 "Progress could not be saved",
                 f"The latest change is still open in the app, but writing the save failed:\n\n{exc}",
             )
+
+    def _refresh_save_status(self) -> None:
+        updated = self.storage.last_updated
+        if self._saving_paused_reason:
+            status = "Saving paused — cloud conflict detected."
+        elif updated is None:
+            status = "No progress save has been created yet."
+        else:
+            status = f"Last saved: {updated:%b %d, %Y at %I:%M %p}"
+        self.screens["settings"].set_save_status(status, self.storage.session_backup)
 
     def export_save(self) -> None:
         safe_name = "".join(character if character.isalnum() else "-" for character in self.engine.state["profile"]["player_name"]).strip("-")
@@ -206,10 +229,11 @@ class MainWindow(QMainWindow):
         try:
             backup = self.storage.replace_with_import(imported)
             self.engine.state = imported
+            self._saving_paused_reason = None
             self.refresh_all()
             detail = f"\n\nPrevious save backup:\n{backup}" if backup else ""
             QMessageBox.information(self, "Import complete", "Progress was imported successfully." + detail)
-        except (OSError, GameRuleError) as exc:
+        except (OSError, GameRuleError, SaveConflictError) as exc:
             QMessageBox.warning(self, "Import failed", str(exc))
 
     def reset_save(self) -> None:
@@ -226,10 +250,11 @@ class MainWindow(QMainWindow):
             current_name = self.engine.state["profile"]["player_name"]
             state, backup = self.storage.reset(current_name)
             self.engine.state = state
+            self._saving_paused_reason = None
             self.refresh_all()
             self.navigate("dashboard")
             QMessageBox.information(self, "Progress reset", f"Fresh progress is ready.\n\nPrevious save backup:\n{backup}")
-        except OSError as exc:
+        except (OSError, SaveConflictError) as exc:
             QMessageBox.warning(self, "Reset failed", str(exc))
 
     def closeEvent(self, event):  # noqa: N802 - Qt API

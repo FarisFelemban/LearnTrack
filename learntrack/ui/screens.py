@@ -1010,6 +1010,10 @@ class SettingsScreen(Page):
         note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(note)
+        self.save_status = QLabel()
+        self.save_status.setObjectName("muted")
+        self.save_status.setWordWrap(True)
+        layout.addWidget(self.save_status)
         row = QHBoxLayout()
         export = QPushButton("Export save…")
         export.clicked.connect(self.export_requested)
@@ -1046,6 +1050,10 @@ class SettingsScreen(Page):
             self.engine.state["profile"].get("allow_custom_import_rewards", False)
         )
         self.custom_import_rewards.blockSignals(False)
+
+    def set_save_status(self, status: str, backup_path=None) -> None:
+        backup_detail = f"\nAutomatic restore point: {backup_path}" if backup_path else ""
+        self.save_status.setText(status + backup_detail)
 
     def save_name(self) -> None:
         try:

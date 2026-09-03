@@ -258,6 +258,10 @@ class UISmokeTests(unittest.TestCase):
         self.assertEqual(self.app.applicationDisplayName(), "LearnTrack")
         self.assertEqual(self.window.windowTitle(), "LearnTrack")
 
+    def test_settings_shows_save_status(self):
+        settings = self.window.screens["settings"]
+        self.assertIn("Last saved:", settings.save_status.text())
+
     def test_navigation_uses_requested_menu_icons(self):
         self.assertEqual(self.window.nav_buttons["settings"].text(), "Settings")
         self.assertFalse(self.window.nav_buttons["settings"].icon().isNull())

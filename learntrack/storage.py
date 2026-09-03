@@ -23,6 +23,10 @@ class SaveCorruptionError(RuntimeError):
         self.backup_path = backup_path
 
 
+class SaveConflictError(RuntimeError):
+    """Saving was stopped to avoid overwriting a cloud-sync conflict."""
+
+
 class SaveManager:
     """Own the local save location and all file replacement operations."""
 
@@ -31,10 +35,25 @@ class SaveManager:
             root = Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))
             save_path = root / "progress.json"
         self.path = Path(save_path).expanduser().resolve()
+        self._known_signature = self._file_signature()
+        self._session_backup: Path | None = None
 
     @property
     def exists(self) -> bool:
         return self.path.exists()
+
+    @property
+    def last_updated(self) -> datetime | None:
+        """Return the current save's local modification time, if it exists."""
+        try:
+            return datetime.fromtimestamp(self.path.stat().st_mtime).astimezone()
+        except FileNotFoundError:
+            return None
+
+    @property
+    def session_backup(self) -> Path | None:
+        """Return the automatic restore point created during this app session."""
+        return self._session_backup
 
     def migrate_from(self, legacy_path: str | Path) -> bool:
         """Copy a legacy save into this manager's location without removing it."""
@@ -56,6 +75,7 @@ class SaveManager:
                 destination.flush()
                 os.fsync(destination.fileno())
             os.replace(temp_path, self.path)
+            self._known_signature = self._file_signature()
             return True
         finally:
             if temp_path and temp_path.exists():
@@ -70,6 +90,7 @@ class SaveManager:
             validate_state(state)
             # A running timer always comes back paused after relaunch.
             state["progress"]["timer"]["running"] = False
+            self._known_signature = self._file_signature()
             return state
         except (OSError, json.JSONDecodeError, GameRuleError, TypeError, KeyError) as exc:
             backup = self._backup(self.path, "broken")
@@ -78,7 +99,14 @@ class SaveManager:
             ) from exc
 
     def save(self, state: dict) -> None:
+        """Save state unless a cloud service changed the file since it was loaded."""
         validate_state(state)
+        self._ensure_sync_safe()
+        if self.path.exists() and self._session_backup is None:
+            self._session_backup = self._backup(self.path, "pre-save")
+        self._write(state)
+
+    def _write(self, state: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path: Path | None = None
         try:
@@ -96,6 +124,7 @@ class SaveManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, self.path)
+            self._known_signature = self._file_signature()
         finally:
             if temp_path and temp_path.exists():
                 temp_path.unlink()
@@ -122,15 +151,48 @@ class SaveManager:
 
     def replace_with_import(self, state: dict) -> Path | None:
         validate_state(state)
+        self._ensure_sync_safe()
         backup = self._backup(self.path, "pre-import") if self.path.exists() else None
-        self.save(state)
+        self._write(state)
         return backup
 
     def reset(self, player_name: str = "Adventurer") -> tuple[dict, Path | None]:
+        self._ensure_sync_safe()
         backup = self._backup(self.path, "pre-reset") if self.path.exists() else None
         state = create_default_state(player_name)
-        self.save(state)
+        self._write(state)
         return state, backup
+
+    def _ensure_sync_safe(self) -> None:
+        conflicts = self._conflict_copies()
+        if conflicts:
+            names = ", ".join(conflict.name for conflict in conflicts)
+            raise SaveConflictError(
+                "Saving was stopped because a cloud-sync conflict copy was found: "
+                f"{names}. Review the conflicting files before continuing."
+            )
+        current_signature = self._file_signature()
+        if self._known_signature is not None and current_signature != self._known_signature:
+            raise SaveConflictError(
+                "Saving was stopped because progress.json changed outside LearnTrack. "
+                "A newer cloud-synced version may be available."
+            )
+
+    def _conflict_copies(self) -> list[Path]:
+        if not self.path.parent.exists():
+            return []
+        return sorted(
+            entry
+            for entry in self.path.parent.glob(f"{self.path.stem}*.json")
+            if entry != self.path and "conflict" in entry.stem.casefold()
+        )
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
 
     @staticmethod
     def _backup(source: Path, label: str) -> Path:

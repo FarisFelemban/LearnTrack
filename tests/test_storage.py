@@ -5,7 +5,7 @@ import unittest
 
 from learntrack.defaults import create_default_state
 from learntrack.engine import GameEngine, GameRuleError
-from learntrack.storage import SaveCorruptionError, SaveManager
+from learntrack.storage import SaveConflictError, SaveCorruptionError, SaveManager
 
 
 class StorageTests(unittest.TestCase):
@@ -84,6 +84,37 @@ class StorageTests(unittest.TestCase):
         self.assertTrue(backup.exists())
         self.assertEqual(state["profile"]["player_name"], "Same Name")
         self.assertEqual(state["progress"]["xp"], 0)
+
+    def test_first_save_after_loading_creates_one_automatic_restore_point(self):
+        self.storage.save(create_default_state("Original"))
+        reloaded_storage = SaveManager(self.path)
+        state = reloaded_storage.load()
+        state["profile"]["player_name"] = "Updated"
+
+        reloaded_storage.save(state)
+
+        self.assertIsNotNone(reloaded_storage.session_backup)
+        self.assertTrue(reloaded_storage.session_backup.exists())
+        self.assertEqual(json.loads(reloaded_storage.session_backup.read_text(encoding="utf-8"))["profile"]["player_name"], "Original")
+
+    def test_external_change_stops_saving(self):
+        self.storage.save(create_default_state("Original"))
+        reloaded_storage = SaveManager(self.path)
+        reloaded_storage.load()
+        self.path.write_text(json.dumps(create_default_state("Newer cloud save")), encoding="utf-8")
+
+        with self.assertRaises(SaveConflictError):
+            reloaded_storage.save(create_default_state("Local change"))
+
+    def test_conflict_copy_stops_saving(self):
+        self.storage.save(create_default_state("Original"))
+        reloaded_storage = SaveManager(self.path)
+        reloaded_storage.load()
+        conflict_copy = self.path.with_name("progress (Faris's conflicted copy).json")
+        conflict_copy.write_text(json.dumps(create_default_state("Conflict")), encoding="utf-8")
+
+        with self.assertRaises(SaveConflictError):
+            reloaded_storage.save(create_default_state("Local change"))
 
     def test_autosaved_quest_to_shop_loop_survives_relaunch(self):
         state = create_default_state("Loop Tester")
