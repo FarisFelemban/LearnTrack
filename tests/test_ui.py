@@ -101,9 +101,48 @@ class UISmokeTests(unittest.TestCase):
         mini_timer = self.window.mini_timer
         self.assertTrue(mini_timer.isVisible())
         self.assertTrue(mini_timer.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
-        self.assertEqual(mini_timer.mode_label.text(), "FOCUS")
+        self.assertTrue(mini_timer.windowFlags() & Qt.WindowType.FramelessWindowHint)
+        self.assertFalse(hasattr(mini_timer, "mode_label"))
+        self.assertFalse(hasattr(mini_timer, "status_label"))
         self.assertEqual(mini_timer.time_label.text(), "20:00")
-        self.assertEqual(mini_timer.status_label.text(), "Running")
+        self.assertEqual(mini_timer.toggle_button.toolTip(), "Pause timer")
+
+    def test_mini_timer_play_pause_button_toggles_the_same_timer(self):
+        self.window.show()
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        timer_panel.choose("focus", 20)
+        timer_panel.toggle()
+        self.app.processEvents()
+
+        QTest.mouseClick(self.window.mini_timer.toggle_button, Qt.MouseButton.LeftButton)
+        self.app.processEvents()
+        self.assertFalse(self.state["progress"]["timer"]["running"])
+        self.assertFalse(timer_panel.clock.isActive())
+        self.assertEqual(self.window.mini_timer.toggle_button.toolTip(), "Resume timer")
+
+        QTest.mouseClick(self.window.mini_timer.toggle_button, Qt.MouseButton.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(self.state["progress"]["timer"]["running"])
+        self.assertTrue(timer_panel.clock.isActive())
+        self.assertEqual(self.window.mini_timer.toggle_button.toolTip(), "Pause timer")
+
+    def test_resizing_mini_timer_keeps_text_sizes_unchanged(self):
+        self.window.show()
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        timer_panel.choose("focus", 20)
+        timer_panel.toggle()
+        self.app.processEvents()
+        mini_timer = self.window.mini_timer
+        countdown_size = mini_timer.time_label.font().pointSizeF()
+
+        mini_timer.resize(440, 190)
+        self.app.processEvents()
+
+        self.assertEqual((mini_timer.width(), mini_timer.height()), (440, 190))
+        self.assertEqual(mini_timer.time_label.font().pointSizeF(), countdown_size)
+        self.assertTrue(mini_timer.size_grip.isVisible())
+        self.assertLess(mini_timer.time_label.geometry().top(), mini_timer.toggle_button.geometry().top())
+        self.assertEqual(mini_timer.size_grip.geometry().bottomRight(), mini_timer.rect().bottomRight())
 
     def test_mini_timer_can_be_hidden_and_shown_again(self):
         self.window.show()
@@ -131,7 +170,7 @@ class UISmokeTests(unittest.TestCase):
 
         self.assertTrue(self.window.mini_timer.isVisible())
         self.assertEqual(self.window.mini_timer.time_label.text(), "00:00")
-        self.assertEqual(self.window.mini_timer.status_label.text(), "Focus complete")
+        self.assertEqual(self.window.mini_timer.toggle_button.toolTip(), "Restart timer")
         self.assertFalse(self.state["progress"]["timer"]["running"])
 
     def test_custom_timer_is_saved_paused(self):

@@ -22,7 +22,7 @@ On the first run, the game asks only for your player name. Progress saves automa
 
 ## Included gameplay
 
-- Dashboard with level progress, current run, optional backdrop artwork, activity, editable focus/break timer presets, and an always-on-top mini timer with completion notifications
+- Dashboard with level progress, current run, optional backdrop artwork, activity, editable focus/break timer presets, and a resizable always-on-top mini timer with play/pause controls and completion notifications
 - Filterable Quest Board with the complete FastAPI quest line from `LearnTrack.md`, safe resets, and reward-free replays
 - Editable learning paths, quests, bonuses, bosses, requirements, and shop rewards
 - Evidence and confirmation before claims, mandatory boss checklists, and duplicate-claim protection

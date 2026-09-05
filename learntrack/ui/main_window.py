@@ -147,6 +147,7 @@ class MainWindow(QMainWindow):
         self._setup_tray_icon()
         self.screens["dashboard"].navigate.connect(self.navigate)
         timer_panel = self.screens["dashboard"].timer_panel
+        self.mini_timer.toggle_requested.connect(timer_panel.toggle)
         timer_panel.timer_started.connect(self._timer_started)
         timer_panel.timer_finished.connect(self._timer_finished)
         timer_panel.mini_timer_requested.connect(self._show_mini_timer)

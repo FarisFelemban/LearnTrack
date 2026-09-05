@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 import random
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPointF, QPropertyAnimation, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QEasingCurve, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QSizeGrip,
     QVBoxLayout,
     QWidget,
 )
@@ -250,13 +251,19 @@ class MiniTimerWindow(QWidget):
     """Compact always-on-top view of the active timer."""
 
     hide_requested = Signal()
+    toggle_requested = Signal()
 
     def __init__(self):
-        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        super().__init__(
+            None,
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint,
+        )
         self._allow_close = False
+        self._drag_offset = None
         self.setObjectName("miniTimerWindow")
         self.setWindowTitle("LearnTrack Timer")
-        self.setFixedSize(250, 132)
+        self.setMinimumSize(240, 104)
+        self.resize(270, 112)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAccessibleName("LearnTrack mini timer")
         self.setStyleSheet(
@@ -265,59 +272,119 @@ class MiniTimerWindow(QWidget):
                 background-color: #0b1220;
                 border: 1px solid #237b9b;
             }
-            QLabel#miniTimerMode {
-                color: #45e6ff;
-                font-size: 11px;
-                font-weight: 700;
-            }
             QLabel#miniTimerValue {
                 color: #f4fbff;
                 font-size: 30px;
                 font-weight: 750;
             }
-            QLabel#miniTimerStatus { color: #8296aa; }
+            QPushButton#miniTimerToggle {
+                background-color: #087d98;
+                border-color: #45e6ff;
+                border-radius: 18px;
+                min-width: 36px;
+                max-width: 36px;
+                min-height: 36px;
+                max-height: 36px;
+                padding: 0;
+            }
+            QPushButton#miniTimerToggle:hover { background-color: #0a9cbb; }
+            QPushButton#miniTimerHide { padding: 7px 10px; }
             """
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 12)
-        layout.setSpacing(2)
-
-        heading_row = QHBoxLayout()
-        self.mode_label = QLabel("FOCUS")
-        self.mode_label.setObjectName("miniTimerMode")
-        self.hide_button = QPushButton("Hide")
-        self.hide_button.setToolTip("Hide the mini timer. You can show it again from the Dashboard timer.")
-        self.hide_button.clicked.connect(self.hide_requested.emit)
-        heading_row.addWidget(self.mode_label)
-        heading_row.addStretch()
-        heading_row.addWidget(self.hide_button)
-        layout.addLayout(heading_row)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(8)
 
         self.time_label = QLabel("00:00")
         self.time_label.setObjectName("miniTimerValue")
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.time_label)
+        self.time_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(self.time_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addStretch()
 
-        self.status_label = QLabel("Paused")
-        self.status_label.setObjectName("miniTimerStatus")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
+        self._play_icon = self._control_icon(running=False)
+        self._pause_icon = self._control_icon(running=True)
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(8)
+        controls_row.addStretch()
+        self.toggle_button = QPushButton()
+        self.toggle_button.setObjectName("miniTimerToggle")
+        self.toggle_button.setIconSize(QSize(20, 20))
+        self.toggle_button.clicked.connect(self.toggle_requested.emit)
+        controls_row.addWidget(self.toggle_button)
 
-    def set_timer(self, remaining_seconds: int, mode: str, running: bool) -> None:
+        self.hide_button = QPushButton("Hide")
+        self.hide_button.setObjectName("miniTimerHide")
+        self.hide_button.setToolTip("Hide the mini timer. You can show it again from the Dashboard timer.")
+        self.hide_button.clicked.connect(self.hide_requested.emit)
+        controls_row.addWidget(self.hide_button)
+        controls_row.addStretch()
+        layout.addLayout(controls_row)
+
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.setToolTip("Drag to resize the mini timer")
+        self.size_grip.resize(16, 16)
+        self.size_grip.raise_()
+
+    @staticmethod
+    def _control_icon(running: bool) -> QIcon:
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#f4fbff"))
+        if running:
+            painter.drawRoundedRect(QRectF(4, 3, 4, 14), 1, 1)
+            painter.drawRoundedRect(QRectF(12, 3, 4, 14), 1, 1)
+        else:
+            path = QPainterPath()
+            path.moveTo(5, 3)
+            path.lineTo(17, 10)
+            path.lineTo(5, 17)
+            path.closeSubpath()
+            painter.drawPath(path)
+        painter.end()
+        return QIcon(pixmap)
+
+    def set_timer(self, remaining_seconds: int, _mode: str, running: bool) -> None:
         minutes, seconds = divmod(max(0, remaining_seconds), 60)
-        mode_name = "Break" if mode == "break" else "Focus"
-        self.mode_label.setText(mode_name.upper())
         self.time_label.setText(f"{minutes:02d}:{seconds:02d}")
 
         if remaining_seconds == 0:
-            status = f"{mode_name} complete"
+            control_description = "Restart timer"
         elif running:
-            status = "Running"
+            control_description = "Pause timer"
         else:
-            status = "Paused"
-        self.status_label.setText(status)
+            control_description = "Resume timer"
+        self.toggle_button.setIcon(self._pause_icon if running else self._play_icon)
+        self.toggle_button.setToolTip(control_description)
+        self.toggle_button.setAccessibleName(control_description)
         self.setWindowTitle(f"LearnTrack Timer — {self.time_label.text()}")
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt API
+        self.size_grip.move(self.width() - self.size_grip.width(), self.height() - self.size_grip.height())
+        super().resizeEvent(event)
+
+    def mousePressEvent(self, event):  # noqa: N802 - Qt API
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802 - Qt API
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 - Qt API
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
     def shutdown(self) -> None:
         self._allow_close = True
