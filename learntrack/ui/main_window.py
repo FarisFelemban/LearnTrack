@@ -6,15 +6,18 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -31,7 +34,7 @@ from .screens import (
     SettingsScreen,
     ShopScreen,
 )
-from .widgets import CelebrationOverlay
+from .widgets import CelebrationOverlay, MiniTimerWindow
 
 
 def _quest_board_icon() -> QIcon:
@@ -137,7 +140,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(sidebar)
         layout.addWidget(self.stack, 1)
         self.overlay = CelebrationOverlay(root)
+        self.mini_timer = MiniTimerWindow()
+        self.mini_timer.hide_requested.connect(self._hide_mini_timer)
+        self._mini_timer_hidden = False
+        self._mini_timer_positioned = False
+        self._setup_tray_icon()
         self.screens["dashboard"].navigate.connect(self.navigate)
+        timer_panel = self.screens["dashboard"].timer_panel
+        timer_panel.timer_started.connect(self._timer_started)
+        timer_panel.timer_finished.connect(self._timer_finished)
+        timer_panel.mini_timer_requested.connect(self._show_mini_timer)
         self.screens["quests"].completed.connect(self.celebrate)
         self.screens["bosses"].completed.connect(self.celebrate)
         settings = self.screens["settings"]
@@ -161,6 +173,95 @@ class MainWindow(QMainWindow):
         for screen in self.screens.values():
             screen.refresh()
         self._refresh_save_status()
+        self._sync_timer_surfaces()
+
+    def _setup_tray_icon(self) -> None:
+        self.tray_icon = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray_icon.setToolTip("LearnTrack — Timer paused")
+        tray_menu = QMenu(self)
+
+        show_app_action = QAction("Show LearnTrack", self)
+        show_app_action.triggered.connect(self._show_main_window)
+        tray_menu.addAction(show_app_action)
+
+        self.show_mini_action = QAction("Show mini timer", self)
+        self.show_mini_action.triggered.connect(self._show_mini_timer)
+        tray_menu.addAction(self.show_mini_action)
+        tray_menu.addSeparator()
+
+        quit_action = QAction("Quit LearnTrack", self)
+        quit_action.triggered.connect(self.close)
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon.show()
+
+    def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_main_window()
+
+    def _show_main_window(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _timer_started(self) -> None:
+        self._mini_timer_hidden = False
+        self._show_mini_timer()
+
+    def _timer_finished(self, mode: str) -> None:
+        mode_name = "Break" if mode == "break" else "Focus"
+        self._sync_timer_surfaces()
+        if self.tray_icon.isVisible() and QSystemTrayIcon.supportsMessages():
+            self.tray_icon.showMessage(
+                "LearnTrack timer finished",
+                f"Your {mode_name.lower()} timer is complete.",
+                QSystemTrayIcon.MessageIcon.Information,
+                10_000,
+            )
+        QApplication.alert(self, 5_000)
+
+    def _sync_timer_surfaces(self) -> None:
+        timer = self.engine.progress["timer"]
+        remaining = timer["remaining_seconds"]
+        mode = timer["mode"]
+        running = timer["running"]
+        self.mini_timer.set_timer(remaining, mode, running)
+
+        minutes, seconds = divmod(remaining, 60)
+        mode_name = "Break" if mode == "break" else "Focus"
+        if remaining == 0:
+            tooltip = f"LearnTrack — {mode_name} timer complete"
+        elif running:
+            tooltip = f"LearnTrack — {mode_name} {minutes:02d}:{seconds:02d} remaining"
+        else:
+            tooltip = f"LearnTrack — Timer paused at {minutes:02d}:{seconds:02d}"
+        self.tray_icon.setToolTip(tooltip)
+
+        if running and not self._mini_timer_hidden and not self.mini_timer.isVisible():
+            self._show_mini_timer()
+
+    def _position_mini_timer(self) -> None:
+        if self._mini_timer_positioned:
+            return
+        available = self.screen().availableGeometry()
+        self.mini_timer.move(
+            available.right() - self.mini_timer.width() - 24,
+            available.top() + 24,
+        )
+        self._mini_timer_positioned = True
+
+    def _show_mini_timer(self) -> None:
+        self._mini_timer_hidden = False
+        self._position_mini_timer()
+        self.mini_timer.show()
+        self._sync_timer_surfaces()
+
+    def _hide_mini_timer(self) -> None:
+        self._mini_timer_hidden = True
+        self.mini_timer.hide()
 
     def celebrate(self, level_up: bool) -> None:
         if self.engine.state["profile"].get("animations_enabled", True):
@@ -309,7 +410,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Reset failed", str(exc))
 
     def closeEvent(self, event):  # noqa: N802 - Qt API
+        self.screens["dashboard"].timer_panel.clock.stop()
         timer = self.engine.progress["timer"]
         # Restored timers are deliberately paused, never silently running.
         self.engine.update_timer(timer["remaining_seconds"], False)
+        self.mini_timer.shutdown()
+        self.tray_icon.hide()
         event.accept()

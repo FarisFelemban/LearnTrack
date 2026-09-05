@@ -246,8 +246,96 @@ class CircularTimer(QWidget):
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{minutes:02d}:{seconds:02d}")
 
 
+class MiniTimerWindow(QWidget):
+    """Compact always-on-top view of the active timer."""
+
+    hide_requested = Signal()
+
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self._allow_close = False
+        self.setObjectName("miniTimerWindow")
+        self.setWindowTitle("LearnTrack Timer")
+        self.setFixedSize(250, 132)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAccessibleName("LearnTrack mini timer")
+        self.setStyleSheet(
+            """
+            QWidget#miniTimerWindow {
+                background-color: #0b1220;
+                border: 1px solid #237b9b;
+            }
+            QLabel#miniTimerMode {
+                color: #45e6ff;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QLabel#miniTimerValue {
+                color: #f4fbff;
+                font-size: 30px;
+                font-weight: 750;
+            }
+            QLabel#miniTimerStatus { color: #8296aa; }
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 12)
+        layout.setSpacing(2)
+
+        heading_row = QHBoxLayout()
+        self.mode_label = QLabel("FOCUS")
+        self.mode_label.setObjectName("miniTimerMode")
+        self.hide_button = QPushButton("Hide")
+        self.hide_button.setToolTip("Hide the mini timer. You can show it again from the Dashboard timer.")
+        self.hide_button.clicked.connect(self.hide_requested.emit)
+        heading_row.addWidget(self.mode_label)
+        heading_row.addStretch()
+        heading_row.addWidget(self.hide_button)
+        layout.addLayout(heading_row)
+
+        self.time_label = QLabel("00:00")
+        self.time_label.setObjectName("miniTimerValue")
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.time_label)
+
+        self.status_label = QLabel("Paused")
+        self.status_label.setObjectName("miniTimerStatus")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+
+    def set_timer(self, remaining_seconds: int, mode: str, running: bool) -> None:
+        minutes, seconds = divmod(max(0, remaining_seconds), 60)
+        mode_name = "Break" if mode == "break" else "Focus"
+        self.mode_label.setText(mode_name.upper())
+        self.time_label.setText(f"{minutes:02d}:{seconds:02d}")
+
+        if remaining_seconds == 0:
+            status = f"{mode_name} complete"
+        elif running:
+            status = "Running"
+        else:
+            status = "Paused"
+        self.status_label.setText(status)
+        self.setWindowTitle(f"LearnTrack Timer — {self.time_label.text()}")
+
+    def shutdown(self) -> None:
+        self._allow_close = True
+        self.close()
+
+    def closeEvent(self, event):  # noqa: N802 - Qt API
+        if self._allow_close:
+            event.accept()
+            return
+        event.ignore()
+        self.hide_requested.emit()
+
+
 class TimerPanel(Card):
     timer_saved = Signal()
+    timer_started = Signal()
+    timer_finished = Signal(str)
+    mini_timer_requested = Signal()
 
     def __init__(self, engine):
         super().__init__()
@@ -288,8 +376,11 @@ class TimerPanel(Card):
         self.start_button.clicked.connect(self.toggle)
         reset_button = QPushButton("Reset")
         reset_button.clicked.connect(self.reset)
+        self.show_mini_button = QPushButton("Show mini")
+        self.show_mini_button.clicked.connect(self.mini_timer_requested.emit)
         control_row.addWidget(self.start_button)
         control_row.addWidget(reset_button)
+        control_row.addWidget(self.show_mini_button)
         layout.addLayout(control_row)
         self.refresh_preset_buttons()
         self.refresh()
@@ -379,9 +470,12 @@ class TimerPanel(Card):
         timer = self.engine.progress["timer"]
         if timer["remaining_seconds"] == 0:
             timer["remaining_seconds"] = timer["duration_seconds"]
-        self.engine.update_timer(timer["remaining_seconds"], not timer["running"])
+        starting = not timer["running"]
+        self.engine.update_timer(timer["remaining_seconds"], starting)
         self.refresh()
         self.timer_saved.emit()
+        if starting:
+            self.timer_started.emit()
 
     def reset(self) -> None:
         timer = self.engine.progress["timer"]
@@ -392,6 +486,7 @@ class TimerPanel(Card):
 
     def _tick(self) -> None:
         timer = self.engine.progress["timer"]
+        previous_remaining = timer["remaining_seconds"]
         remaining = max(0, timer["remaining_seconds"] - 1)
         # Save on each tick so closing at any moment preserves the remainder.
         self.engine.update_timer(remaining, remaining > 0)
@@ -399,6 +494,8 @@ class TimerPanel(Card):
         if remaining == 0:
             self.clock.stop()
         self.timer_saved.emit()
+        if previous_remaining > 0 and remaining == 0:
+            self.timer_finished.emit(timer["mode"])
 
 
 class CelebrationOverlay(QWidget):

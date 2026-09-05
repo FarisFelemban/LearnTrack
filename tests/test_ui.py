@@ -91,6 +91,49 @@ class UISmokeTests(unittest.TestCase):
         self.assertTrue(self.state["progress"]["timer"]["running"])
         self.assertEqual((self.state["progress"]["xp"], self.state["progress"]["gold"]), (0, 0))
 
+    def test_running_timer_shows_always_on_top_mini_timer(self):
+        self.window.show()
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        timer_panel.choose("focus", 20)
+        timer_panel.toggle()
+        self.app.processEvents()
+
+        mini_timer = self.window.mini_timer
+        self.assertTrue(mini_timer.isVisible())
+        self.assertTrue(mini_timer.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        self.assertEqual(mini_timer.mode_label.text(), "FOCUS")
+        self.assertEqual(mini_timer.time_label.text(), "20:00")
+        self.assertEqual(mini_timer.status_label.text(), "Running")
+
+    def test_mini_timer_can_be_hidden_and_shown_again(self):
+        self.window.show()
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        timer_panel.choose("focus", 20)
+        timer_panel.toggle()
+        self.app.processEvents()
+
+        QTest.mouseClick(self.window.mini_timer.hide_button, Qt.MouseButton.LeftButton)
+        self.app.processEvents()
+        self.assertFalse(self.window.mini_timer.isVisible())
+
+        QTest.mouseClick(timer_panel.show_mini_button, Qt.MouseButton.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(self.window.mini_timer.isVisible())
+
+    def test_mini_timer_reports_completion_outside_main_window(self):
+        self.window.show()
+        timer_panel = self.window.screens["dashboard"].timer_panel
+        self.window.engine.set_timer_seconds("focus", 1)
+        timer_panel.refresh()
+        timer_panel.toggle()
+        timer_panel._tick()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.mini_timer.isVisible())
+        self.assertEqual(self.window.mini_timer.time_label.text(), "00:00")
+        self.assertEqual(self.window.mini_timer.status_label.text(), "Focus complete")
+        self.assertFalse(self.state["progress"]["timer"]["running"])
+
     def test_custom_timer_is_saved_paused(self):
         timer_panel = self.window.screens["dashboard"].timer_panel
         timer_panel.begin_duration_edit()
@@ -310,6 +353,7 @@ class UISmokeTests(unittest.TestCase):
         saved_timer = self.storage.load()["progress"]["timer"]
         self.assertEqual(saved_timer["remaining_seconds"], 1199)
         self.assertFalse(saved_timer["running"])
+        self.assertFalse(timer_panel.clock.isActive())
 
 
 if __name__ == "__main__":
