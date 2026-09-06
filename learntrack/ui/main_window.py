@@ -34,6 +34,7 @@ from .screens import (
     SettingsScreen,
     ShopScreen,
 )
+from .theme import flash_windows_taskbar
 from .widgets import CelebrationOverlay, MiniTimerWindow
 
 
@@ -222,7 +223,8 @@ class MainWindow(QMainWindow):
                 QSystemTrayIcon.MessageIcon.Information,
                 10_000,
             )
-        QApplication.alert(self, 5_000)
+        if not flash_windows_taskbar(self):
+            QApplication.alert(self, 5_000)
 
     def _sync_timer_surfaces(self) -> None:
         timer = self.engine.progress["timer"]

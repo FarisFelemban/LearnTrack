@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from ctypes import wintypes
 
 from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QWidget
@@ -42,6 +43,37 @@ def _style_windows_title_bar(widget: QWidget) -> None:
     except (AttributeError, OSError):
         # Older Windows versions may not expose DWM caption-color controls.
         return
+
+
+def flash_windows_taskbar(widget: QWidget, count: int = 5) -> bool:
+    """Flash a window's Windows taskbar button a finite number of times."""
+
+    if sys.platform != "win32":
+        return False
+
+    class FlashWindowInfo(ctypes.Structure):
+        _fields_ = (
+            ("cbSize", wintypes.UINT),
+            ("hwnd", wintypes.HWND),
+            ("dwFlags", wintypes.DWORD),
+            ("uCount", wintypes.UINT),
+            ("dwTimeout", wintypes.DWORD),
+        )
+
+    try:
+        flash_window_ex = ctypes.windll.user32.FlashWindowEx
+        flash_window_ex.argtypes = (ctypes.POINTER(FlashWindowInfo),)
+        flash_window_ex.restype = wintypes.BOOL
+        flash_info = FlashWindowInfo(
+            ctypes.sizeof(FlashWindowInfo),
+            wintypes.HWND(int(widget.winId())),
+            0x00000002,  # FLASHW_TRAY: flash only the taskbar button.
+            max(1, int(count)),
+            0,
+        )
+        return bool(flash_window_ex(ctypes.byref(flash_info)))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
 
 
 class WindowsTitleBarStyler(QObject):

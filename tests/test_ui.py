@@ -164,10 +164,12 @@ class UISmokeTests(unittest.TestCase):
         timer_panel = self.window.screens["dashboard"].timer_panel
         self.window.engine.set_timer_seconds("focus", 1)
         timer_panel.refresh()
-        timer_panel.toggle()
-        timer_panel._tick()
+        with patch("learntrack.ui.main_window.flash_windows_taskbar", return_value=True) as flash_taskbar:
+            timer_panel.toggle()
+            timer_panel._tick()
         self.app.processEvents()
 
+        flash_taskbar.assert_called_once_with(self.window)
         self.assertTrue(self.window.mini_timer.isVisible())
         self.assertEqual(self.window.mini_timer.time_label.text(), "00:00")
         self.assertEqual(self.window.mini_timer.toggle_button.toolTip(), "Restart timer")
