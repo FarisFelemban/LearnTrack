@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
-from ..quest_import import build_quest_prompt, parse_quest_batch
+from ..quest_import import build_boss_prompt, build_quest_prompt, parse_boss_batch, parse_quest_batch
 
 
 def _buttons(dialog: QDialog, save_text: str = "Save") -> QDialogButtonBox:
@@ -350,6 +350,175 @@ class QuestImportDialog(QDialog):
             imported = self.engine.import_quests(self.path.currentData(), self._preview_quests)
         except GameRuleError as exc:
             QMessageBox.warning(self, "Cannot import quests", str(exc))
+            self._invalidate_preview()
+            return
+        self.imported_count = len(imported)
+        super().accept()
+
+
+class BossImportDialog(QDialog):
+    """Copy an AI prompt, preview its boss JSON response, and import it safely."""
+
+    def __init__(self, engine, parent=None, preferred_path_id: str | None = None):
+        super().__init__(parent)
+        self.engine = engine
+        self._preview_bosses: list[dict] | None = None
+        self.imported_count = 0
+        self.setWindowTitle("Generate & Import Bosses")
+        self.resize(780, 680)
+        self.setMinimumSize(680, 600)
+
+        outer = QVBoxLayout(self)
+        heading = QLabel("GENERATE BOSSES WITH YOUR AI")
+        heading.setObjectName("sectionTitle")
+        outer.addWidget(heading)
+        note = QLabel(
+            "LearnTrack does not contact an AI. Copy the prompt into your preferred AI, then paste its JSON response below."
+        )
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        outer.addWidget(note)
+
+        inputs = QFormLayout()
+        self.path = QComboBox()
+        available_paths = [path for path in engine.state["paths"] if not path.get("archived")]
+        for path in available_paths:
+            self.path.addItem(path["name"], path["id"])
+        selected_path_id = preferred_path_id
+        if self.path.findData(selected_path_id) < 0:
+            selected_path_id = next((path["id"] for path in available_paths if path.get("status") == "active"), None)
+        if selected_path_id is not None:
+            self.path.setCurrentIndex(max(0, self.path.findData(selected_path_id)))
+        self.topic = QLineEdit()
+        self.topic.setPlaceholderText("For example: Build and test a complete FastAPI service")
+        inputs.addRow("Learning path", self.path)
+        inputs.addRow("Boss topic", self.topic)
+        outer.addLayout(inputs)
+
+        prompt_label = QLabel("1. COPY THIS PROMPT")
+        prompt_label.setObjectName("sectionTitle")
+        outer.addWidget(prompt_label)
+        self.prompt = QPlainTextEdit()
+        self.prompt.setReadOnly(True)
+        self.prompt.setMaximumHeight(205)
+        outer.addWidget(self.prompt)
+        self.copy_button = QPushButton("Copy AI prompt")
+        self.copy_button.clicked.connect(self.copy_prompt)
+        outer.addWidget(self.copy_button)
+
+        response_label = QLabel("2. PASTE THE AI RESPONSE")
+        response_label.setObjectName("sectionTitle")
+        outer.addWidget(response_label)
+        self.response = QPlainTextEdit()
+        self.response.setPlaceholderText('Paste the JSON object containing the "bosses" list here…')
+        self.response.setMinimumHeight(120)
+        outer.addWidget(self.response, 1)
+
+        preview_row = QHBoxLayout()
+        self.preview_button = QPushButton("Preview bosses")
+        self.preview_button.setProperty("accent", True)
+        self.preview_button.clicked.connect(self.preview_import)
+        self.preview_summary = QLabel("No batch previewed yet")
+        self.preview_summary.setObjectName("muted")
+        preview_row.addWidget(self.preview_button)
+        preview_row.addWidget(self.preview_summary)
+        preview_row.addStretch()
+        outer.addLayout(preview_row)
+
+        self.preview_table = QTableWidget(0, 3)
+        self.preview_table.setHorizontalHeaderLabels(["Boss", "Requirements", "Reward"])
+        self.preview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.preview_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.verticalHeader().hide()
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview_table.setMaximumHeight(180)
+        outer.addWidget(self.preview_table)
+
+        actions = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.import_button = actions.addButton("Import bosses", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.import_button.setEnabled(False)
+        self.import_button.clicked.connect(self.import_preview)
+        actions.rejected.connect(self.reject)
+        outer.addWidget(actions)
+
+        self.topic.textChanged.connect(self._update_prompt)
+        self.path.currentIndexChanged.connect(self._path_changed)
+        self.response.textChanged.connect(self._invalidate_preview)
+        self._update_prompt()
+
+    @property
+    def custom_rewards_enabled(self) -> bool:
+        return self.engine.state["profile"].get("allow_custom_import_rewards", False)
+
+    def _update_prompt(self) -> None:
+        self.prompt.setPlainText(
+            build_boss_prompt(self.topic.text(), self.path.currentText(), self.custom_rewards_enabled)
+        )
+
+    def _path_changed(self) -> None:
+        self._update_prompt()
+        self._invalidate_preview()
+
+    def _invalidate_preview(self) -> None:
+        self._preview_bosses = None
+        self.import_button.setEnabled(False)
+        self.preview_summary.setText("No batch previewed yet")
+        self.preview_table.setRowCount(0)
+
+    def copy_prompt(self) -> None:
+        if not self.topic.text().strip():
+            QMessageBox.warning(self, "Boss topic required", "Enter the topic you want the AI to build bosses for.")
+            self.topic.setFocus()
+            return
+        QApplication.clipboard().setText(self.prompt.toPlainText())
+        self.copy_button.setText("Copied")
+
+    def preview_import(self) -> None:
+        if self.path.currentData() is None:
+            QMessageBox.warning(self, "Learning path required", "Create or select a non-archived learning path first.")
+            return
+        if not self.topic.text().strip():
+            QMessageBox.warning(self, "Boss topic required", "Enter the topic used to generate this boss batch.")
+            self.topic.setFocus()
+            return
+        try:
+            raw_bosses = parse_boss_batch(self.response.toPlainText())
+            prepared = self.engine.prepare_boss_import(self.path.currentData(), raw_bosses)
+        except GameRuleError as exc:
+            QMessageBox.warning(self, "Cannot preview bosses", str(exc))
+            return
+
+        self._preview_bosses = raw_bosses
+        self.preview_table.setRowCount(len(prepared))
+        for row, boss in enumerate(prepared):
+            required_count = sum(requirement["mandatory"] for requirement in boss["requirements"])
+            values = (
+                boss["title"],
+                f"{required_count} mandatory / {len(boss['requirements'])} total",
+                f"{boss['xp']} XP / {boss['gold']} Gold",
+            )
+            for column, value in enumerate(values):
+                self.preview_table.setItem(row, column, QTableWidgetItem(value))
+        mode = "custom rewards" if self.custom_rewards_enabled else "standard boss rewards"
+        self.preview_summary.setText(f"{len(prepared)} bosses ready · {mode}")
+        self.import_button.setEnabled(True)
+
+    def import_preview(self) -> None:
+        if self._preview_bosses is None:
+            return
+        count = len(self._preview_bosses)
+        answer = QMessageBox.question(
+            self,
+            "Import boss batch?",
+            f"Add {count} bosses to “{self.path.currentText()}”?\n\nAll bosses will begin as Available.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            imported = self.engine.import_bosses(self.path.currentData(), self._preview_bosses)
+        except GameRuleError as exc:
+            QMessageBox.warning(self, "Cannot import bosses", str(exc))
             self._invalidate_preview()
             return
         self.imported_count = len(imported)

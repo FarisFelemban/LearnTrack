@@ -18,6 +18,7 @@ from learntrack.defaults import create_default_state
 from learntrack.storage import SaveManager
 from learntrack.ui.dialogs import (
     BossDialog,
+    BossImportDialog,
     CompletionDialog,
     PathDialog,
     QuestDialog,
@@ -260,6 +261,11 @@ class UISmokeTests(unittest.TestCase):
             labels = {button.text() for button in self.window.screens[screen_name].findChildren(QPushButton)}
             self.assertIn("Generate and import quests…", labels)
 
+    def test_boss_import_controls_exist_in_bosses_and_settings(self):
+        for screen_name in ("bosses", "settings"):
+            labels = {button.text() for button in self.window.screens[screen_name].findChildren(QPushButton)}
+            self.assertIn("Generate and import bosses…", labels)
+
     def test_quest_import_dialog_copies_previews_and_imports(self):
         original_count = len(self.state["quests"])
         dialog = QuestImportDialog(self.window.engine, self.window, "path-fastapi")
@@ -292,6 +298,42 @@ class UISmokeTests(unittest.TestCase):
             dialog.import_preview()
         self.assertEqual(dialog.imported_count, 1)
         self.assertEqual(len(self.state["quests"]), original_count + 1)
+
+    def test_boss_import_dialog_copies_previews_and_imports(self):
+        original_count = len(self.state["bosses"])
+        dialog = BossImportDialog(self.window.engine, self.window, "path-fastapi")
+        self.addCleanup(dialog.close)
+        dialog.topic.setText("Testing FastAPI mastery")
+        dialog.copy_prompt()
+        self.assertIn("Learning topic: Testing FastAPI mastery", self.app.clipboard().text())
+        dialog.response.setPlainText(
+            json.dumps(
+                {
+                    "bosses": [
+                        {
+                            "title": "Testing Champion",
+                            "victory_condition": "Build and verify a fully tested service.",
+                            "requirements": [
+                                {"text": "Run the complete test suite", "mandatory": True},
+                                {"text": "Explain one testing tradeoff", "mandatory": False},
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+
+        dialog.preview_import()
+
+        self.assertEqual(dialog.path.currentData(), "path-fastapi")
+        self.assertEqual(dialog.preview_table.rowCount(), 1)
+        self.assertTrue(dialog.import_button.isEnabled())
+        self.assertEqual(dialog.preview_table.item(0, 1).text(), "1 mandatory / 2 total")
+        self.assertEqual(dialog.preview_table.item(0, 2).text(), "150 XP / 50 Gold")
+        with patch("learntrack.ui.dialogs.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+            dialog.import_preview()
+        self.assertEqual(dialog.imported_count, 1)
+        self.assertEqual(len(self.state["bosses"]), original_count + 1)
 
     def test_custom_import_reward_setting_defaults_off_and_saves(self):
         settings = self.window.screens["settings"]

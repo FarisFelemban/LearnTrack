@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
-from .dialogs import BossDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
+from .dialogs import BossDialog, BossImportDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
 from .widgets import AnimatedXPBar, BackdropPanel, Card, StatCard, TimerPanel
 
 
@@ -615,6 +615,9 @@ class BossesScreen(Page):
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
+        import_button = QPushButton("Generate and import bosses…")
+        import_button.clicked.connect(self.import_bosses)
+        header.addWidget(import_button)
         add = QPushButton("+ Add boss")
         add.setProperty("accent", True)
         add.clicked.connect(self.add_boss)
@@ -750,6 +753,13 @@ class BossesScreen(Page):
                 self.changed.emit()
             except GameRuleError as exc:
                 _message(self, "Cannot add boss", exc)
+
+    def import_bosses(self) -> None:
+        selected = self.selected()
+        preferred_path_id = selected["path_id"] if selected else None
+        dialog = BossImportDialog(self.engine, self, preferred_path_id)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.changed.emit()
 
     def edit_boss(self) -> None:
         boss = self.selected()
@@ -984,13 +994,13 @@ class SettingsScreen(Page):
         self.current_run_background.toggled.connect(self.save_current_run_background)
         form.addWidget(self.current_run_background, 3, 0, 1, 3)
         outer.addWidget(profile)
-        quest_import = Card()
-        import_layout = QVBoxLayout(quest_import)
-        heading = QLabel("QUEST IMPORT")
+        content_import = Card()
+        import_layout = QVBoxLayout(content_import)
+        heading = QLabel("AI CONTENT IMPORT")
         heading.setObjectName("sectionTitle")
         import_layout.addWidget(heading)
         import_note = QLabel(
-            "Build a copyable prompt for your preferred AI, then preview and import its generated quests."
+            "Build a copyable prompt for your preferred AI, then preview and import its generated quests or bosses."
         )
         import_note.setObjectName("muted")
         import_note.setWordWrap(True)
@@ -1001,7 +1011,10 @@ class SettingsScreen(Page):
         import_quests = QPushButton("Generate and import quests…")
         import_quests.clicked.connect(self.import_quests)
         import_layout.addWidget(import_quests)
-        outer.addWidget(quest_import)
+        import_bosses = QPushButton("Generate and import bosses…")
+        import_bosses.clicked.connect(self.import_bosses)
+        import_layout.addWidget(import_bosses)
+        outer.addWidget(content_import)
         data = Card()
         layout = QVBoxLayout(data)
         heading = QLabel("SAVE DATA")
@@ -1080,5 +1093,10 @@ class SettingsScreen(Page):
 
     def import_quests(self) -> None:
         dialog = QuestImportDialog(self.engine, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.changed.emit()
+
+    def import_bosses(self) -> None:
+        dialog = BossImportDialog(self.engine, self)
         if dialog.exec() == dialog.DialogCode.Accepted:
             self.changed.emit()

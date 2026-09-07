@@ -599,6 +599,108 @@ class GameEngine:
         self._changed()
         return prepared
 
+    def prepare_boss_import(self, path_id: str, bosses: object) -> list[dict]:
+        """Validate and normalize a boss batch without changing player state."""
+
+        path = self._find("paths", path_id)
+        if path.get("archived"):
+            raise GameRuleError("Choose a learning path that is not archived.")
+        if not isinstance(bosses, list) or not bosses:
+            raise GameRuleError("The import needs at least one boss.")
+        if len(bosses) > 100:
+            raise GameRuleError("A single import can contain at most 100 bosses.")
+
+        custom_rewards = self.state["profile"].get("allow_custom_import_rewards", False)
+        known_titles = {
+            self._import_text_key(item.get("title", ""))
+            for item in self.state["bosses"]
+            if item.get("path_id") == path_id
+        }
+        prepared = []
+        for index, data in enumerate(bosses, start=1):
+            prefix = f"Boss {index}"
+            if not isinstance(data, dict):
+                raise GameRuleError(f"{prefix} must be a JSON object.")
+
+            values = {}
+            for field, label in (("title", "title"), ("victory_condition", "victory condition")):
+                value = data.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise GameRuleError(f"{prefix} needs a non-empty {label}.")
+                values[field] = value.strip()
+
+            title_key = self._import_text_key(values["title"])
+            if title_key in known_titles:
+                raise GameRuleError(f"{prefix} duplicates an existing or earlier boss in this learning path.")
+            known_titles.add(title_key)
+
+            raw_requirements = data.get("requirements")
+            if not isinstance(raw_requirements, list) or not raw_requirements:
+                raise GameRuleError(f"{prefix} needs at least one requirement.")
+            requirements = []
+            requirement_keys = set()
+            for requirement_index, requirement in enumerate(raw_requirements, start=1):
+                if not isinstance(requirement, dict):
+                    raise GameRuleError(f"{prefix} requirement {requirement_index} must be a JSON object.")
+                text = requirement.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    raise GameRuleError(f"{prefix} requirement {requirement_index} needs non-empty text.")
+                mandatory = requirement.get("mandatory")
+                if not isinstance(mandatory, bool):
+                    raise GameRuleError(f"{prefix} requirement {requirement_index} mandatory must be true or false.")
+                requirement_key = self._import_text_key(text)
+                if requirement_key in requirement_keys:
+                    raise GameRuleError(f"{prefix} has duplicate requirements.")
+                requirement_keys.add(requirement_key)
+                requirements.append({"text": text.strip(), "mandatory": mandatory})
+            requirements = self._normalise_requirements(requirements)
+
+            if custom_rewards:
+                try:
+                    xp = self._strict_non_negative_int(data.get("xp"), "XP")
+                    gold = self._strict_non_negative_int(data.get("gold"), "Gold")
+                    bonuses = data.get("bonuses", [])
+                    if not isinstance(bonuses, list) or any(not isinstance(bonus, dict) for bonus in bonuses):
+                        raise GameRuleError("Bonuses must be a JSON list.")
+                    for bonus in bonuses:
+                        if not isinstance(bonus.get("title"), str) or not bonus["title"].strip():
+                            raise GameRuleError("Every bonus needs a title.")
+                        self._strict_non_negative_int(bonus.get("xp"), "Bonus XP")
+                        self._strict_non_negative_int(bonus.get("gold"), "Bonus Gold")
+                    bonuses = self._normalise_bonuses(bonuses)
+                except GameRuleError as exc:
+                    raise GameRuleError(f"{prefix}: {exc}") from exc
+            else:
+                xp = DIFFICULTIES["boss"]["xp"]
+                gold = DIFFICULTIES["boss"]["gold"]
+                bonuses = []
+
+            prepared.append(
+                {
+                    "id": f"boss-{uuid4()}",
+                    "path_id": path_id,
+                    "title": values["title"],
+                    "victory_condition": values["victory_condition"],
+                    "requirements": requirements,
+                    "xp": xp,
+                    "gold": gold,
+                    "bonuses": bonuses,
+                    "status": "available",
+                    "archived": False,
+                }
+            )
+        return prepared
+
+    def import_bosses(self, path_id: str, bosses: object) -> list[dict]:
+        """Atomically add a fully validated batch of user-generated bosses."""
+
+        prepared = self.prepare_boss_import(path_id, bosses)
+        self.state["bosses"].extend(prepared)
+        path = self._find("paths", path_id)
+        self._activity(f"Imported {len(prepared)} bosses into {path['name']}", "content_imported")
+        self._changed()
+        return prepared
+
     def reset_quest(self, quest_id: str) -> None:
         quest = self._find("quests", quest_id)
         if quest.get("archived") or quest.get("status") == "archived":
@@ -764,8 +866,11 @@ class GameEngine:
 
     @staticmethod
     def _quest_import_key(stage: object, title: object) -> tuple[str, str]:
-        normalize = lambda value: " ".join(str(value).split()).casefold()
-        return normalize(stage), normalize(title)
+        return GameEngine._import_text_key(stage), GameEngine._import_text_key(title)
+
+    @staticmethod
+    def _import_text_key(value: object) -> str:
+        return " ".join(str(value).split()).casefold()
 
     @classmethod
     def _normalise_bonuses(cls, bonuses: Iterable[dict]) -> list[dict]:

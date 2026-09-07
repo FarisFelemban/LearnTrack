@@ -251,6 +251,72 @@ class EngineTests(unittest.TestCase):
                 [{"stage": "Other", "title": "Missing rewards", "difficulty": "easy", "definition_of_done": "Done"}],
             )
 
+    def test_standard_boss_import_is_balanced_and_atomic(self):
+        before = len(self.state["bosses"])
+        raw = [
+            {
+                "title": "Service Mastery",
+                "victory_condition": "Build and verify a working service.",
+                "requirements": [
+                    {"text": "Implement the service", "mandatory": True},
+                    {"text": "Document one tradeoff", "mandatory": False},
+                ],
+                "xp": 999,
+                "gold": 999,
+            }
+        ]
+
+        prepared = self.engine.prepare_boss_import("path-fastapi", raw)
+        self.assertEqual(len(self.state["bosses"]), before)
+        imported = self.engine.import_bosses("path-fastapi", raw)
+
+        self.assertEqual(len(self.state["bosses"]), before + 1)
+        self.assertEqual((imported[0]["xp"], imported[0]["gold"]), (150, 50))
+        self.assertEqual(imported[0]["bonuses"], [])
+        self.assertTrue(all(requirement["id"] for requirement in imported[0]["requirements"]))
+        self.assertEqual(imported[0]["status"], "available")
+
+        broken = raw + [{"title": "Broken", "victory_condition": "Done", "requirements": []}]
+        count_before_failure = len(self.state["bosses"])
+        with self.assertRaisesRegex(GameRuleError, "Boss 1 duplicates"):
+            self.engine.import_bosses("path-fastapi", broken)
+        self.assertEqual(len(self.state["bosses"]), count_before_failure)
+
+    def test_boss_import_validates_requirements_and_duplicates(self):
+        boss = {
+            "title": "Unique Boss",
+            "victory_condition": "Prove the result.",
+            "requirements": [{"text": "Show the result", "mandatory": True}],
+        }
+        with self.assertRaisesRegex(GameRuleError, "Boss 2 duplicates"):
+            self.engine.prepare_boss_import("path-fastapi", [boss, dict(boss)])
+        invalid_flag = dict(
+            boss,
+            title="Another Boss",
+            requirements=[{"text": "Show the result", "mandatory": "yes"}],
+        )
+        with self.assertRaisesRegex(GameRuleError, "true or false"):
+            self.engine.prepare_boss_import("path-fastapi", [invalid_flag])
+
+    def test_custom_boss_import_uses_supplied_rewards_and_bonuses(self):
+        self.engine.set_custom_import_rewards(True)
+        imported = self.engine.import_bosses(
+            "path-fastapi",
+            [
+                {
+                    "title": "Custom Boss",
+                    "victory_condition": "Complete the custom challenge.",
+                    "requirements": [{"text": "Finish it", "mandatory": True}],
+                    "xp": 275,
+                    "gold": 90,
+                    "bonuses": [{"title": "Stretch goal", "xp": 25, "gold": 10}],
+                }
+            ],
+        )
+        self.assertEqual((imported[0]["xp"], imported[0]["gold"]), (275, 90))
+        self.assertEqual((imported[0]["bonuses"][0]["xp"], imported[0]["bonuses"][0]["gold"]), (25, 10))
+        self.assertTrue(imported[0]["bonuses"][0]["id"])
+
     def test_old_profile_without_custom_import_setting_remains_valid(self):
         self.state["profile"].pop("allow_custom_import_rewards")
         self.state["profile"].pop("show_current_run_background")
