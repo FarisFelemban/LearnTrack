@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,6 +27,22 @@ from PySide6.QtWidgets import (
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
 from ..quest_import import build_boss_prompt, build_quest_prompt, parse_boss_batch, parse_quest_batch
+from .theme import paint_system_panel
+
+
+class SystemDialog(QDialog):
+    """Shared system frame, keeping native dialog controls and modality."""
+
+    def showEvent(self, event):  # noqa: N802 - Qt API
+        if self.layout() is not None:
+            self.layout().setContentsMargins(18, 18, 18, 18)
+        super().showEvent(event)
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        paint_system_panel(painter, self.rect(), fill=False)
 
 
 def _buttons(dialog: QDialog, save_text: str = "Save") -> QDialogButtonBox:
@@ -59,7 +76,7 @@ def _parse_bonuses(text: str, existing: list[dict] | None = None) -> list[dict]:
     return result
 
 
-class NameSetupDialog(QDialog):
+class NameSetupDialog(SystemDialog):
     def __init__(self, parent=None, current_name: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Create your player profile")
@@ -92,7 +109,7 @@ class NameSetupDialog(QDialog):
         super().accept()
 
 
-class PathDialog(QDialog):
+class PathDialog(SystemDialog):
     def __init__(self, parent=None, item: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("Edit learning path" if item else "Add learning path")
@@ -122,7 +139,7 @@ class PathDialog(QDialog):
         }
 
 
-class QuestDialog(QDialog):
+class QuestDialog(SystemDialog):
     def __init__(self, paths: list[dict], parent=None, item: dict | None = None):
         super().__init__(parent)
         self.item = item
@@ -186,7 +203,7 @@ class QuestDialog(QDialog):
         }
 
 
-class QuestImportDialog(QDialog):
+class QuestImportDialog(SystemDialog):
     """Copy an AI prompt, preview its JSON response, and import it safely."""
 
     def __init__(self, engine, parent=None, preferred_path_id: str | None = None):
@@ -356,7 +373,7 @@ class QuestImportDialog(QDialog):
         super().accept()
 
 
-class BossImportDialog(QDialog):
+class BossImportDialog(SystemDialog):
     """Copy an AI prompt, preview its boss JSON response, and import it safely."""
 
     def __init__(self, engine, parent=None, preferred_path_id: str | None = None):
@@ -525,7 +542,7 @@ class BossImportDialog(QDialog):
         super().accept()
 
 
-class TimerPresetsDialog(QDialog):
+class TimerPresetsDialog(SystemDialog):
     """Edit the three focus shortcuts and one break shortcut."""
 
     def __init__(self, focus_minutes: tuple[int, int, int], break_minutes: int, parent=None):
@@ -557,7 +574,7 @@ class TimerPresetsDialog(QDialog):
         return focus, self.break_input.value()
 
 
-class BossDialog(QDialog):
+class BossDialog(SystemDialog):
     def __init__(self, paths: list[dict], parent=None, item: dict | None = None):
         super().__init__(parent)
         self.item = item
@@ -635,7 +652,7 @@ class BossDialog(QDialog):
         }
 
 
-class RewardDialog(QDialog):
+class RewardDialog(SystemDialog):
     def __init__(self, parent=None, item: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("Edit shop reward" if item else "Add shop reward")
@@ -656,7 +673,7 @@ class RewardDialog(QDialog):
         return {"title": self.title.text(), "cost": self.cost.value(), "level_required": self.level.value()}
 
 
-class CompletionDialog(QDialog):
+class CompletionDialog(SystemDialog):
     def __init__(self, item: dict, parent=None, boss: bool = False, replay: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Complete quest replay" if replay else "Claim boss victory" if boss else "Claim quest completion")

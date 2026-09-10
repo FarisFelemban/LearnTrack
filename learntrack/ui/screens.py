@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
 from .dialogs import BossDialog, BossImportDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
+from .theme import COLORS
 from .widgets import AnimatedXPBar, BackdropPanel, Card, StatCard, TimerPanel
 
 
@@ -86,25 +87,40 @@ class DashboardScreen(Page):
 
     def __init__(self, engine):
         super().__init__(engine)
-        outer = QVBoxLayout(self)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content.setObjectName("pageContent")
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll)
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(22, 18, 22, 22)
         heading = QHBoxLayout()
         title_box = QVBoxLayout()
         self.greeting = QLabel()
         self.greeting.setObjectName("pageTitle")
+        self.greeting.setWordWrap(True)
+        status_heading = QLabel("[ PLAYER STATUS ]")
+        status_heading.setObjectName("systemHeading")
+        title_box.addWidget(status_heading)
         title_box.addWidget(self.greeting)
         heading.addLayout(title_box)
-        heading.addStretch()
+
         outer.addLayout(heading)
-        outer.addSpacing(14)
+        outer.setSpacing(12)
 
         stats = QHBoxLayout()
         self.level_card = StatCard("Level", color_name="cyan")
         self.xp_card = StatCard("Total XP", color_name="magenta")
         self.gold_card = StatCard("Available Gold", color_name="gold")
         self.path_card = StatCard("Active path", color_name="cyan")
+        self.path_card.value_label.setObjectName("pathValue")
+        self.path_card.value_label.setMinimumWidth(0)
+        self.path_card.value_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         for card in (self.level_card, self.xp_card, self.gold_card, self.path_card):
-            stats.addWidget(card)
+            stats.addWidget(card, 1)
         outer.addLayout(stats)
 
         self.xp_bar = AnimatedXPBar()
@@ -112,11 +128,12 @@ class DashboardScreen(Page):
 
         main_row = QHBoxLayout()
         self.hero = BackdropPanel()
-        self.hero.setMinimumHeight(310)
+        self.hero.setMinimumHeight(290)
+        self.hero.setMinimumWidth(0)
         hero_layout = QVBoxLayout(self.hero)
-        hero_layout.setContentsMargins(24, 24, 24, 24)
-        current_caption = QLabel("CURRENT RUN")
-        current_caption.setObjectName("cyan")
+        hero_layout.setContentsMargins(20, 18, 20, 18)
+        current_caption = QLabel("[ CURRENT RUN ]")
+        current_caption.setObjectName("systemHeading")
         hero_layout.addWidget(current_caption)
         self.current_title = QLabel()
         self.current_title.setObjectName("pageTitle")
@@ -127,7 +144,7 @@ class DashboardScreen(Page):
         self.current_details.setMaximumWidth(620)
         hero_layout.addWidget(self.current_details)
         hero_layout.addStretch()
-        quick_row = QHBoxLayout()
+        quick_row = QGridLayout()
         self.current_action = QPushButton("Open current run")
         self.current_action.setProperty("accent", True)
         self.current_action.clicked.connect(self._open_current)
@@ -135,20 +152,19 @@ class DashboardScreen(Page):
         board.clicked.connect(lambda: self.navigate.emit("quests"))
         paths = QPushButton("Learning paths")
         paths.clicked.connect(lambda: self.navigate.emit("paths"))
-        quick_row.addWidget(self.current_action)
-        quick_row.addWidget(board)
-        quick_row.addWidget(paths)
-        quick_row.addStretch()
+        quick_row.addWidget(self.current_action, 0, 0, 1, 2)
+        quick_row.addWidget(board, 1, 0)
+        quick_row.addWidget(paths, 1, 1)
         hero_layout.addLayout(quick_row)
         main_row.addWidget(self.hero, 3)
         self.timer_panel = TimerPanel(engine)
         self.timer_panel.timer_saved.connect(self.changed)
         main_row.addWidget(self.timer_panel, 2)
-        outer.addLayout(main_row)
+        outer.addLayout(main_row, 1)
 
         activity_card = Card()
         activity_layout = QVBoxLayout(activity_card)
-        activity_title = QLabel("RECENT ACTIVITY")
+        activity_title = QLabel("[ RECENT ACTIVITY ]")
         activity_title.setObjectName("sectionTitle")
         activity_layout.addWidget(activity_title)
         self.activity = QLabel()
@@ -165,7 +181,7 @@ class DashboardScreen(Page):
     def refresh(self) -> None:
         profile = self.engine.state["profile"]
         animate = profile.get("animations_enabled", True)
-        self.greeting.setText(f"Welcome back, {profile['player_name']}")
+        self.greeting.setText(profile["player_name"])
         self.level_card.set_value(self.engine.level)
         self.xp_card.set_number(self.engine.progress["xp"], animate=animate)
         self.gold_card.set_number(self.engine.progress["gold"], animate=animate)
@@ -193,12 +209,12 @@ class DashboardScreen(Page):
             self.current_action.setEnabled(True)
         entries = self.engine.progress["activity"][:5]
         if not entries:
-            self.activity.setText("<span style='color:#8296aa'>No activity yet. Start your first quest.</span>")
+            self.activity.setText(f"<span style='color:{COLORS['muted']}'>No activity yet. Start your first quest.</span>")
         else:
             self.activity.setText(
                 "<br>".join(
-                    f"<span style='color:#4be2f5'>•</span> {escape(entry['message'])} "
-                    f"<span style='color:#62788d'>— {escape(_friendly_time(entry['timestamp']))}</span>"
+                    f"<span style='color:{COLORS['accent']}'>•</span> {escape(entry['message'])} "
+                    f"<span style='color:{COLORS['muted']}'>— {escape(_friendly_time(entry['timestamp']))}</span>"
                     for entry in entries
                 )
             )
@@ -213,7 +229,7 @@ class QuestBoardScreen(Page):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 18, 22, 22)
         title_row = QHBoxLayout()
-        title = QLabel("Quest Board")
+        title = QLabel("[ QUEST BOARD ]")
         title.setObjectName("pageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
@@ -255,6 +271,7 @@ class QuestBoardScreen(Page):
         self.detail_title.setWordWrap(True)
         self.detail_meta = QLabel()
         self.detail_meta.setObjectName("cyan")
+        self.detail_meta.setWordWrap(True)
         self.detail_body = QTextBrowser()
         self.detail_body.setOpenExternalLinks(False)
         self.detail_body.setFrameShape(QFrame.Shape.NoFrame)
@@ -367,9 +384,9 @@ class QuestBoardScreen(Page):
             f"<li>{escape(bonus['title'])} — +{bonus['xp']} XP, +{bonus['gold']} Gold</li>" for bonus in quest.get("bonuses", [])
         ) or "<li>No optional bonuses</li>"
         self.detail_body.setHtml(
-            f"<h3 style='color:#dff8ff'>Definition of done</h3><p>{escape(quest['definition_of_done'])}</p>"
-            f"<h3 style='color:#ffc857'>Base reward</h3><p>+{quest['xp']} XP &nbsp; +{quest['gold']} Gold</p>"
-            f"<h3 style='color:#ff71cf'>Optional objectives</h3><ul>{bonus_html}</ul>"
+            f"<h3 style='color:{COLORS['text']}'>Definition of done</h3><p>{escape(quest['definition_of_done'])}</p>"
+            f"<h3 style='color:{COLORS['gold']}'>Base reward</h3><p>+{quest['xp']} XP &nbsp; +{quest['gold']} Gold</p>"
+            f"<h3 style='color:{COLORS['accent']}'>Optional objectives</h3><ul>{bonus_html}</ul>"
         )
         current_run = self.engine.progress.get("current_run")
         is_current = bool(current_run and current_run["kind"] == "quest" and current_run["item_id"] == quest["id"])
@@ -482,7 +499,7 @@ class PathsScreen(Page):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 18, 22, 22)
         title_row = QHBoxLayout()
-        title = QLabel("Learning Paths")
+        title = QLabel("[ LEARNING PATHS ]")
         title.setObjectName("pageTitle")
         title_row.addWidget(title)
         title_row.addStretch()
@@ -500,8 +517,10 @@ class PathsScreen(Page):
         card_layout = QVBoxLayout(card)
         self.title = QLabel("Select a path")
         self.title.setObjectName("pageTitle")
+        self.title.setWordWrap(True)
         self.status = QLabel()
         self.status.setObjectName("cyan")
+        self.status.setWordWrap(True)
         self.goal = QLabel()
         self.goal.setWordWrap(True)
         self.objective = QLabel()
@@ -546,7 +565,7 @@ class PathsScreen(Page):
         first = None
         for status in PATH_STATUSES:
             root = QTreeWidgetItem([status.upper()])
-            root.setForeground(0, QColor("#6f8ca3"))
+            root.setForeground(0, QColor(COLORS["muted"]))
             self.tree.addTopLevelItem(root)
             for path in self.engine.state["paths"]:
                 if path["status"] == status and not path.get("archived"):
@@ -611,7 +630,7 @@ class BossesScreen(Page):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 18, 22, 22)
         header = QHBoxLayout()
-        title = QLabel("Bosses")
+        title = QLabel("[ BOSSES ]")
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
@@ -633,8 +652,10 @@ class BossesScreen(Page):
         layout = QVBoxLayout(card)
         self.title = QLabel("Select a boss")
         self.title.setObjectName("pageTitle")
+        self.title.setWordWrap(True)
         self.meta = QLabel()
         self.meta.setObjectName("magenta")
+        self.meta.setWordWrap(True)
         self.body = QTextBrowser()
         self.body.setFrameShape(QFrame.Shape.NoFrame)
         layout.addWidget(self.title)
@@ -674,7 +695,7 @@ class BossesScreen(Page):
             icon = {"available": "◆", "in_progress": "▶", "completed": "✓", "archived": "—"}.get(boss["status"], "◆")
             item = QListWidgetItem(f"{icon}  {boss['title']}\n     {_path_name(self.engine, boss['path_id'])}")
             item.setData(Qt.ItemDataRole.UserRole, boss["id"])
-            item.setForeground(QColor("#ff637e" if boss["status"] != "completed" else "#52e08b"))
+            item.setForeground(QColor(COLORS["accent"] if boss["status"] != "completed" else COLORS["muted"]))
             self.list.addItem(item)
             if boss["id"] == selected_id:
                 self.list.setCurrentItem(item)
@@ -699,9 +720,9 @@ class BossesScreen(Page):
             f"<li>{escape(bonus['title'])} — +{bonus['xp']} XP, +{bonus['gold']} Gold</li>" for bonus in boss.get("bonuses", [])
         ) or "<li>No optional objectives</li>"
         self.body.setHtml(
-            f"<h3 style='color:#e8f4ff'>Victory condition</h3><p>{escape(boss['victory_condition'])}</p>"
-            f"<h3 style='color:#ff8ca0'>Requirements</h3><ul>{requirements}</ul>"
-            f"<h3 style='color:#ffc857'>Optional objectives</h3><ul>{bonuses}</ul>"
+            f"<h3 style='color:{COLORS['text']}'>Victory condition</h3><p>{escape(boss['victory_condition'])}</p>"
+            f"<h3 style='color:{COLORS['accent']}'>Requirements</h3><ul>{requirements}</ul>"
+            f"<h3 style='color:{COLORS['gold']}'>Optional objectives</h3><ul>{bonuses}</ul>"
         )
         current_run = self.engine.progress.get("current_run")
         is_current = bool(current_run and current_run["kind"] == "boss" and current_run["item_id"] == boss["id"])
@@ -786,7 +807,7 @@ class ShopScreen(Page):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 18, 22, 22)
         header = QHBoxLayout()
-        title = QLabel("Reward Shop")
+        title = QLabel("[ REWARD SHOP ]")
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch()
@@ -800,16 +821,21 @@ class ShopScreen(Page):
         outer.addLayout(header)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Reward", "Cost", "Unlock", "Status", "Actions"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setMinimumSectionSize(90)
+        self.table.verticalHeader().setMinimumSectionSize(48)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
         outer.addWidget(self.table, 2)
-        history_title = QLabel("PURCHASE HISTORY")
+        history_title = QLabel("[ PURCHASE HISTORY ]")
         history_title.setObjectName("sectionTitle")
         outer.addWidget(history_title)
         self.history = QTableWidget(0, 4)
         self.history.setHorizontalHeaderLabels(["Date", "Reward", "Gold spent", "Gold remaining"])
+        self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.history.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.history.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history.verticalHeader().hide()
@@ -830,16 +856,22 @@ class ShopScreen(Page):
             self.table.setItem(row, 3, QTableWidgetItem(status))
             actions = QWidget()
             action_layout = QHBoxLayout(actions)
-            action_layout.setContentsMargins(0, 2, 0, 2)
+            action_layout.setContentsMargins(4, 3, 4, 3)
+            actions.setObjectName("tableActions")
             buy = QPushButton("Buy")
             buy.setEnabled(unlocked and affordable)
             buy.clicked.connect(lambda checked=False, item_id=reward["id"]: self.buy_reward(item_id))
             edit = QPushButton("Edit")
             edit.clicked.connect(lambda checked=False, item_id=reward["id"]: self.edit_reward(item_id))
             archive = QPushButton("Archive")
+            archive.setProperty("danger", True)
             archive.clicked.connect(lambda checked=False, item_id=reward["id"]: self.archive_reward(item_id))
             action_layout.addWidget(buy); action_layout.addWidget(edit); action_layout.addWidget(archive)
             self.table.setCellWidget(row, 4, actions)
+            actions.ensurePolished()
+            self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(4, actions.sizeHint().width() + 12)
+            self.table.verticalHeader().setMinimumSectionSize(actions.sizeHint().height() + 12)
         self.history.setRowCount(len(self.engine.progress["purchases"]))
         for row, purchase in enumerate(self.engine.progress["purchases"]):
             values = (
@@ -901,6 +933,7 @@ class JournalScreen(Page):
         outer.setContentsMargins(22, 18, 22, 22)
         self.title = QLabel()
         self.title.setObjectName("pageTitle")
+        self.title.setWordWrap(True)
         outer.addWidget(self.title)
         self.stats = QLabel()
         self.stats.setTextFormat(Qt.TextFormat.RichText)
@@ -912,7 +945,7 @@ class JournalScreen(Page):
         self.claims_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.claims_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.claims_table.verticalHeader().hide()
-        tabs.addTab(self.claims_table, "Completed quests & bosses")
+        tabs.addTab(self.claims_table, "Completed quests && bosses")
         self.reward_table = QTableWidget(0, 4)
         self.reward_table.setHorizontalHeaderLabels(["Date", "Earned reward", "Gold spent", "Remaining"])
         self.reward_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -930,9 +963,9 @@ class JournalScreen(Page):
         replay_count = sum(claim.get("is_replay", False) for claim in progress["quest_claims"])
         self.title.setText(f"{self.engine.state['profile']['player_name']} — Player Journal")
         self.stats.setText(
-            f"<b style='color:#45e6ff'>Level {self.engine.level}</b> &nbsp;•&nbsp; "
+            f"<b style='color:{COLORS['accent']}'>Level {self.engine.level}</b> &nbsp;•&nbsp; "
             f"{progress['xp']:,} total XP &nbsp;•&nbsp; "
-            f"<span style='color:#ffc857'>{progress['gold']:,} available Gold</span> &nbsp;•&nbsp; "
+            f"<span style='color:{COLORS['gold']}'>{progress['gold']:,} available Gold</span> &nbsp;•&nbsp; "
             f"{progress['total_gold_earned']:,} total Gold earned &nbsp;•&nbsp; "
             f"{rewarded_quests} quests &nbsp;•&nbsp; {replay_count} replays &nbsp;•&nbsp; "
             f"{len(progress['boss_claims'])} bosses defeated"
@@ -973,12 +1006,12 @@ class SettingsScreen(Page):
         super().__init__(engine)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 18, 22, 22)
-        title = QLabel("Settings")
+        title = QLabel("[ SETTINGS ]")
         title.setObjectName("pageTitle")
         outer.addWidget(title)
         profile = Card()
         form = QGridLayout(profile)
-        heading = QLabel("PLAYER PROFILE")
+        heading = QLabel("[ PLAYER PROFILE ]")
         heading.setObjectName("sectionTitle")
         form.addWidget(heading, 0, 0, 1, 3)
         form.addWidget(QLabel("Player name"), 1, 0)
@@ -996,7 +1029,7 @@ class SettingsScreen(Page):
         outer.addWidget(profile)
         content_import = Card()
         import_layout = QVBoxLayout(content_import)
-        heading = QLabel("AI CONTENT IMPORT")
+        heading = QLabel("[ AI CONTENT IMPORT ]")
         heading.setObjectName("sectionTitle")
         import_layout.addWidget(heading)
         import_note = QLabel(
@@ -1017,7 +1050,7 @@ class SettingsScreen(Page):
         outer.addWidget(content_import)
         data = Card()
         layout = QVBoxLayout(data)
-        heading = QLabel("SAVE DATA")
+        heading = QLabel("[ SAVE DATA ]")
         heading.setObjectName("sectionTitle")
         layout.addWidget(heading)
         note = QLabel("Exports are readable JSON. Imports are validated and require confirmation before replacing progress.")

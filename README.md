@@ -33,6 +33,12 @@ On the first run, the game asks only for your player name. Progress saves automa
 
 Completed or historically used content is archived instead of removing its history. XP never decreases, and Gold only decreases through a confirmed shop purchase.
 
+## Visual style and fonts
+
+The interface uses code-drawn blue system panels and bundled fonts, with no network requests at runtime. Rajdhani SemiBold/Bold is used for headings and numbers, with Inter for body text. The existing Current Run artwork can still be hidden in Settings.
+
+Rajdhani is sourced from the [Google Fonts repository](https://github.com/google/fonts/tree/main/ofl/rajdhani), designed by the Indian Type Foundry, and distributed under the [bundled SIL Open Font License](learntrack/assets/fonts/Rajdhani-OFL.txt).
+
 ## Tests
 
 The automated tests use Python's built-in test runner. Qt runs offscreen, so they do not open windows:

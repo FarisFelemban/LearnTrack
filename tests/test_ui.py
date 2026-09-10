@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox, QPushButton
@@ -46,6 +46,39 @@ class UISmokeTests(unittest.TestCase):
     def test_application_uses_bundled_icon(self):
         self.assertTrue(APP_ICON_PATH.is_file())
         self.assertFalse(self.app.windowIcon().isNull())
+
+    def test_system_display_font_is_bundled_and_registered(self):
+        from learntrack.constants import FONT_PATHS
+        for path in FONT_PATHS:
+            self.assertTrue(path.is_file(), str(path))
+        self.assertIn("Rajdhani", QFontDatabase.families())
+
+    def test_disabling_animations_finishes_in_flight_stat_and_xp_updates(self):
+        dashboard = self.window.screens["dashboard"]
+        dashboard.xp_card.set_number(75)
+        dashboard.xp_bar.show_xp(75)
+        dashboard.xp_card.set_number(75, animate=False)
+        dashboard.xp_bar.show_xp(75, animate=False)
+        self.assertEqual(dashboard.xp_card.value_label.text(), "75")
+        self.assertEqual(dashboard.xp_bar.value(), 75)
+        self.assertEqual(dashboard.xp_card._number_animation.state(), QAbstractAnimation.State.Stopped)
+        self.assertEqual(dashboard.xp_bar._animation.state(), QAbstractAnimation.State.Stopped)
+        self.state["profile"]["animations_enabled"] = False
+        with patch.object(self.window.overlay, "burst") as burst:
+            self.window.celebrate(True)
+        burst.assert_not_called()
+
+    def test_shop_actions_fit_their_cells_at_minimum_window_size(self):
+        self.window.show()
+        self.window.resize(980, 680)
+        self.window.navigate("shop")
+        self.app.processEvents()
+        table = self.window.screens["shop"].table
+        actions = table.cellWidget(0, 4)
+        for button in actions.findChildren(QPushButton):
+            self.assertGreaterEqual(button.width(), button.minimumSizeHint().width())
+            self.assertGreaterEqual(button.height(), button.minimumSizeHint().height())
+            self.assertTrue(actions.rect().contains(button.geometry()))
 
     def test_all_navigation_screens_show(self):
         self.window.show()

@@ -34,8 +34,43 @@ from .screens import (
     SettingsScreen,
     ShopScreen,
 )
-from .theme import flash_windows_taskbar
+from .theme import COLORS, flash_windows_taskbar
 from .widgets import CelebrationOverlay, MiniTimerWindow
+
+
+def _system_nav_icon(name: str) -> QIcon:
+    """Draw small navigation symbols independently of installed font glyphs."""
+    icon = QIcon()
+    for state, color in ((QIcon.State.Off, COLORS["muted"]), (QIcon.State.On, COLORS["accent"])):
+        pixmap = QPixmap(22, 22)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(color), 1.5))
+        if name == "dashboard":
+            for x, y in ((3, 3), (13, 3), (3, 13), (13, 13)):
+                painter.drawRect(QRectF(x, y, 6, 6))
+        elif name == "paths":
+            painter.drawLine(6, 4, 6, 17)
+            painter.drawLine(6, 10, 17, 10)
+            painter.drawLine(6, 17, 17, 17)
+            painter.drawRect(QRectF(3, 2, 6, 5))
+        elif name == "bosses":
+            path = QPainterPath(QPointF(11, 2))
+            for point in ((19, 6), (17, 15), (11, 20), (5, 15), (3, 6), (11, 2)):
+                path.lineTo(*point)
+            painter.drawPath(path)
+            painter.drawLine(11, 6, 11, 14)
+        elif name == "shop":
+            painter.drawEllipse(QRectF(3, 3, 16, 16))
+            painter.drawEllipse(QRectF(7, 7, 8, 8))
+        else:
+            painter.drawRect(QRectF(4, 3, 14, 16))
+            for y in (7, 11, 15):
+                painter.drawLine(7, y, 15, y)
+        painter.end()
+        icon.addPixmap(pixmap, QIcon.Mode.Normal, state)
+    return icon
 
 
 def _quest_board_icon() -> QIcon:
@@ -58,8 +93,8 @@ def _quest_board_icon() -> QIcon:
         return pixmap
 
     icon = QIcon()
-    icon.addPixmap(draw("#89a3b9"), QIcon.Mode.Normal, QIcon.State.Off)
-    icon.addPixmap(draw("#58e8ff"), QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(draw(COLORS["muted"]), QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(draw(COLORS["accent"]), QIcon.Mode.Normal, QIcon.State.On)
     return icon
 
 
@@ -78,8 +113,8 @@ def _hamburger_icon() -> QIcon:
         return pixmap
 
     icon = QIcon()
-    icon.addPixmap(draw("#89a3b9"), QIcon.Mode.Normal, QIcon.State.Off)
-    icon.addPixmap(draw("#58e8ff"), QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(draw(COLORS["muted"]), QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(draw(COLORS["accent"]), QIcon.Mode.Normal, QIcon.State.On)
     return icon
 
 
@@ -114,12 +149,12 @@ class MainWindow(QMainWindow):
         }
         self.nav_buttons: dict[str, QPushButton] = {}
         labels = {
-            "dashboard": "◈  Dashboard",
+            "dashboard": "Dashboard",
             "quests": "Quest Board",
-            "paths": "⌁  Learning Paths",
-            "bosses": "◆  Bosses",
-            "shop": "◉  Reward Shop",
-            "journal": "▤  Journal / Profile",
+            "paths": "Learning Paths",
+            "bosses": "Bosses",
+            "shop": "Reward Shop",
+            "journal": "Journal / Profile",
             "settings": "Settings",
         }
         for key, screen in self.screens.items():
@@ -132,6 +167,9 @@ class MainWindow(QMainWindow):
                 button.setIconSize(QSize(19, 19))
             elif key == "settings":
                 button.setIcon(_hamburger_icon())
+                button.setIconSize(QSize(19, 19))
+            else:
+                button.setIcon(_system_nav_icon(key))
                 button.setIconSize(QSize(19, 19))
             button.clicked.connect(lambda checked=False, name=key: self.navigate(name))
             self.nav_buttons[key] = button

@@ -23,12 +23,18 @@ from PySide6.QtWidgets import (
 from ..constants import BACKDROP_PATH
 from ..engine import next_level_progress
 from .dialogs import TimerPresetsDialog
+from .theme import COLORS, DISPLAY_FONT, paint_system_panel
 
 
 class Card(QFrame):
     def __init__(self, parent: QWidget | None = None, hero: bool = False):
         super().__init__(parent)
         self.setObjectName("heroCard" if hero else "card")
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        paint_system_panel(painter, self.rect(), emphasis=self.objectName() == "heroCard")
 
 
 class StatCard(Card):
@@ -38,16 +44,17 @@ class StatCard(Card):
         layout.setContentsMargins(16, 13, 16, 13)
         self.value_label = QLabel(value)
         self.value_label.setObjectName("statValue")
+        self.value_label.setWordWrap(True)
         if color_name in ("cyan", "gold", "magenta"):
             self.value_label.setStyleSheet(
-                {"cyan": "color:#45e6ff", "gold": "color:#ffc857", "magenta": "color:#ff56c7"}[color_name]
+                "color:" + COLORS["gold" if color_name == "gold" else "accent"]
             )
         caption = QLabel(label.upper())
         caption.setObjectName("statLabel")
         layout.addWidget(self.value_label)
         layout.addWidget(caption)
         self._number_animation = QVariantAnimation(self)
-        self._number_animation.setDuration(450)
+        self._number_animation.setDuration(300)
         self._number_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._number_animation.valueChanged.connect(self._show_animated_number)
         self._number_target: int | None = None
@@ -61,6 +68,9 @@ class StatCard(Card):
     def set_number(self, value: int, suffix: str = "", animate: bool = True) -> None:
         value = int(value)
         if self._number_target == value and self._number_suffix == suffix:
+            if not animate:
+                self._number_animation.stop()
+                self._show_animated_number(value)
             return
         try:
             current = int(self.value_label.text().replace(",", "").removesuffix(self._number_suffix))
@@ -84,10 +94,11 @@ class AnimatedXPBar(QProgressBar):
     def __init__(self):
         super().__init__()
         self._animation = QPropertyAnimation(self, b"value", self)
-        self._animation.setDuration(550)
+        self._animation.setDuration(300)
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def show_xp(self, xp: int, animate: bool = True) -> None:
+        self._animation.stop()
         within, span, next_level = next_level_progress(xp)
         maximum = span or max(1, within)
         self.setRange(0, maximum)
@@ -95,7 +106,6 @@ class AnimatedXPBar(QProgressBar):
             f"{xp:,} XP • MAX DEFINED LEVEL" if next_level is None else f"{within:,} / {span:,} XP to Level {next_level}"
         )
         if animate:
-            self._animation.stop()
             self._animation.setStartValue(self.value())
             self._animation.setEndValue(within)
             self._animation.start()
@@ -129,7 +139,8 @@ class BackdropPanel(QWidget):
             painter.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
             painter.fillRect(self.rect(), QColor(3, 8, 17, 130))
         else:
-            painter.fillRect(self.rect(), QColor("#070b14"))
+            painter.fillRect(self.rect(), QColor(COLORS["background"]))
+        paint_system_panel(painter, self.rect(), fill=False, emphasis=True)
 
 
 class CircularTimer(QWidget):
@@ -231,15 +242,15 @@ class CircularTimer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         side = min(self.width(), self.height()) - 18
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        painter.setPen(QPen(QColor("#1c3047"), 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(QColor(COLORS["border"]), 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawArc(rect, 0, 360 * 16)
-        color = QColor("#ff56c7" if self.mode == "break" else "#3ee6fa")
-        painter.setPen(QPen(color, 10, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        color = QColor(COLORS["muted"] if self.mode == "break" else COLORS["accent"])
+        painter.setPen(QPen(color, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         span = int(360 * 16 * self.remaining / self.duration)
         painter.drawArc(rect, 90 * 16, -span)
         minutes, seconds = divmod(self.remaining, 60)
         painter.setPen(QColor("#f1fbff"))
-        font = QFont(self.font())
+        font = QFont(DISPLAY_FONT)
         font.setPointSize(24)
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
@@ -266,32 +277,6 @@ class MiniTimerWindow(QWidget):
         self.resize(270, 112)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAccessibleName("LearnTrack mini timer")
-        self.setStyleSheet(
-            """
-            QWidget#miniTimerWindow {
-                background-color: #0b1220;
-                border: 1px solid #237b9b;
-            }
-            QLabel#miniTimerValue {
-                color: #f4fbff;
-                font-size: 30px;
-                font-weight: 750;
-            }
-            QPushButton#miniTimerToggle {
-                background-color: #087d98;
-                border-color: #45e6ff;
-                border-radius: 18px;
-                min-width: 36px;
-                max-width: 36px;
-                min-height: 36px;
-                max-height: 36px;
-                padding: 0;
-            }
-            QPushButton#miniTimerToggle:hover { background-color: #0a9cbb; }
-            QPushButton#miniTimerHide { padding: 7px 10px; }
-            """
-        )
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(8)
@@ -326,6 +311,11 @@ class MiniTimerWindow(QWidget):
         self.size_grip.setToolTip("Drag to resize the mini timer")
         self.size_grip.resize(16, 16)
         self.size_grip.raise_()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        paint_system_panel(painter, self.rect(), emphasis=True)
 
     @staticmethod
     def _control_icon(running: bool) -> QIcon:
@@ -413,7 +403,7 @@ class TimerPanel(Card):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         title_row = QHBoxLayout()
-        title = QLabel("TIMER")
+        title = QLabel("[ TIMER ]")
         title.setObjectName("sectionTitle")
         self.presets_button = QPushButton("Presets…")
         self.presets_button.clicked.connect(self.edit_presets)
@@ -581,19 +571,19 @@ class CelebrationOverlay(QWidget):
     def burst(self, level_up: bool = False) -> None:
         self.setGeometry(self.parentWidget().rect())
         center = QPointF(self.width() / 2, self.height() / 2)
-        colors = [QColor("#43e8ff"), QColor("#ff56c7"), QColor("#ffc857")]
-        count = 65 if level_up else 38
+        colors = [QColor(COLORS["accent"]), QColor(COLORS["text"])]
+        count = 26 if level_up else 16
         self._particles = []
         for _ in range(count):
             angle = random.uniform(0, math.tau)
-            speed = random.uniform(2.0, 7.0)
+            speed = random.uniform(1.0, 3.0)
             self._particles.append(
                 {
                     "pos": QPointF(center),
                     "vel": QPointF(math.cos(angle) * speed, math.sin(angle) * speed - 2),
-                    "life": random.randint(32, 62),
+                    "life": random.randint(22, 42),
                     "color": random.choice(colors),
-                    "size": random.uniform(2.5, 6.5),
+                    "size": random.uniform(1.5, 3.0),
                 }
             )
         self.show()
@@ -620,4 +610,4 @@ class CelebrationOverlay(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             size = particle["size"]
-            painter.drawEllipse(particle["pos"], size, size)
+            painter.drawRect(QRectF(particle["pos"].x(), particle["pos"].y(), size, size))

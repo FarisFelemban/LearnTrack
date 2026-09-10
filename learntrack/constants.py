@@ -44,5 +44,7 @@ FONT_PATHS = tuple(
         "Inter-Medium.ttf",
         "Inter-SemiBold.ttf",
         "Inter-Bold.ttf",
+        "Rajdhani-SemiBold.ttf",
+        "Rajdhani-Bold.ttf",
     )
 )
