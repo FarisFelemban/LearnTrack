@@ -102,9 +102,6 @@ class DashboardScreen(Page):
         self.greeting = QLabel()
         self.greeting.setObjectName("pageTitle")
         self.greeting.setWordWrap(True)
-        status_heading = QLabel("[ PLAYER STATUS ]")
-        status_heading.setObjectName("systemHeading")
-        title_box.addWidget(status_heading)
         title_box.addWidget(self.greeting)
         heading.addLayout(title_box)
 
@@ -181,7 +178,7 @@ class DashboardScreen(Page):
     def refresh(self) -> None:
         profile = self.engine.state["profile"]
         animate = profile.get("animations_enabled", True)
-        self.greeting.setText(profile["player_name"])
+        self.greeting.setText(f"Welcome back, {profile['player_name']}")
         self.level_card.set_value(self.engine.level)
         self.xp_card.set_number(self.engine.progress["xp"], animate=animate)
         self.gold_card.set_number(self.engine.progress["gold"], animate=animate)
