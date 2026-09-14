@@ -7,7 +7,7 @@ here so they can be tested without opening a window.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import date, datetime
 from typing import Callable, Iterable
 from uuid import uuid4
 
@@ -24,6 +24,19 @@ from .constants import (
 
 class GameRuleError(ValueError):
     """Raised when an action would break a game rule."""
+
+
+FOCUS_AVERAGE_DAYS = {"week": 7, "month": 365.2425 / 12, "year": 365.2425}
+
+
+def _tracking_date(value: object) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() != value:
+            raise ValueError
+        return parsed
+    except (TypeError, ValueError) as exc:
+        raise GameRuleError("Choose a valid focus start date (YYYY-MM-DD).") from exc
 
 
 def now_iso() -> str:
@@ -189,6 +202,11 @@ def validate_state(state: object) -> None:
             raise GameRuleError("Timer totals must contain focus_seconds and break_seconds.")
         if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in totals.values()):
             raise GameRuleError("Timer totals must be nonnegative whole seconds.")
+    if progress.get("focus_tracking_started_on") is not None:
+        _tracking_date(progress["focus_tracking_started_on"])
+    period = state["profile"].get("focus_average_period", "week")
+    if not isinstance(period, str) or period not in FOCUS_AVERAGE_DAYS:
+        raise GameRuleError("Focus average period must be week, month, or year.")
     timer = progress.get("timer")
     if not isinstance(timer, dict):
         raise GameRuleError("Timer data is missing.")
@@ -233,6 +251,38 @@ class GameEngine:
             raise GameRuleError("Timer-only mode must be true or false.")
         self.state["profile"]["timer_only_mode"] = enabled
         self._changed()
+
+    @property
+    def focus_average_period(self) -> str:
+        return self.state["profile"].get("focus_average_period", "week")
+
+    @property
+    def focus_tracking_started_on(self) -> date | None:
+        value = self.progress.get("focus_tracking_started_on")
+        return _tracking_date(value) if value is not None else None
+
+    def set_focus_average_period(self, period: str) -> None:
+        if not isinstance(period, str) or period not in FOCUS_AVERAGE_DAYS:
+            raise GameRuleError("Choose week, month, or year.")
+        self.state["profile"]["focus_average_period"] = period
+        self._changed()
+
+    def set_focus_tracking_start(self, value: str) -> None:
+        started = _tracking_date(value)
+        if started > date.today():
+            raise GameRuleError("The focus start date cannot be in the future.")
+        self.progress["focus_tracking_started_on"] = started.isoformat()
+        self._changed()
+
+    def focus_average_hours(self, today: date | None = None) -> float | None:
+        """Express the daily pace in the selected period, including inactive days."""
+        total = self.timer_totals["focus_seconds"]
+        started = self.focus_tracking_started_on
+        if started is None:
+            # Older totals have no reliable start date; ask rather than invent one.
+            return None if total else 0.0
+        days = max(1, ((today or date.today()) - started).days + 1)
+        return total / 3600 / days * FOCUS_AVERAGE_DAYS[self.focus_average_period]
 
     def subtract_timer_time(self, mode: str, seconds: int) -> None:
         if mode not in ("focus", "break"):
@@ -865,6 +915,8 @@ class GameEngine:
             return
         elapsed = min(seconds, timer["remaining_seconds"])
         totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+        if timer["mode"] == "focus" and totals["focus_seconds"] == 0 and self.focus_tracking_started_on is None:
+            self.progress["focus_tracking_started_on"] = date.today().isoformat()
         totals[f"{timer['mode']}_seconds"] += elapsed
         timer["remaining_seconds"] -= elapsed
         timer["running"] = timer["remaining_seconds"] > 0

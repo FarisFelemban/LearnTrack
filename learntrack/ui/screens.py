@@ -5,12 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QDate, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -972,6 +975,19 @@ class JournalScreen(Page):
             value.setObjectName("pageTitle")
             value.setWordWrap(True)
             card_layout.addWidget(value)
+            if mode == "focus":
+                average_row = QHBoxLayout()
+                self.focus_average_label = QLabel()
+                self.focus_average_label.setWordWrap(True)
+                average_row.addWidget(self.focus_average_label, 1)
+                self.focus_average_button = QPushButton()
+                self.focus_average_button.setAccessibleName("Change focus average period")
+                self.focus_average_button.clicked.connect(self.cycle_focus_average)
+                average_row.addWidget(self.focus_average_button)
+                card_layout.addLayout(average_row)
+                self.focus_start_button = QPushButton()
+                self.focus_start_button.clicked.connect(self.choose_focus_start)
+                card_layout.addWidget(self.focus_start_button, alignment=Qt.AlignmentFlag.AlignLeft)
             subtract = QPushButton("Subtract time…")
             subtract.clicked.connect(lambda checked=False, kind=mode: self.subtract_time(kind))
             card_layout.addWidget(subtract, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -981,7 +997,58 @@ class JournalScreen(Page):
         totals_layout.addStretch()
         tabs.addTab(self.total_time_page, "Total Time")
         outer.addWidget(tabs, 1)
+        # Refresh across midnight even when the focus timer is paused.
+        self.average_refresh_timer = QTimer(self)
+        self.average_refresh_timer.setInterval(30_000)
+        self.average_refresh_timer.timeout.connect(self.refresh_focus_average)
+        self.average_refresh_timer.start()
         self.refresh()
+
+    def cycle_focus_average(self) -> None:
+        periods = ("week", "month", "year")
+        next_index = (periods.index(self.engine.focus_average_period) + 1) % len(periods)
+        self.engine.set_focus_average_period(periods[next_index])
+        self.refresh_focus_average()
+
+    def choose_focus_start(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Focus tracking start date")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("When did you begin recording your focus time?"))
+        picker = QDateEdit(dialog)
+        picker.setCalendarPopup(True)
+        picker.setDisplayFormat("dd MMM yyyy")
+        picker.setMaximumDate(QDate.currentDate())
+        started = self.engine.focus_tracking_started_on
+        picker.setDate(QDate(started.year, started.month, started.day) if started else QDate.currentDate())
+        layout.addWidget(picker)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.engine.set_focus_tracking_start(picker.date().toString("yyyy-MM-dd"))
+                self.refresh_focus_average()
+        finally:
+            dialog.deleteLater()
+
+    def refresh_focus_average(self) -> None:
+        period = self.engine.focus_average_period
+        average = self.engine.focus_average_hours()
+        self.focus_average_button.setText(f"{period.title()} ↻")
+        self.focus_average_button.setToolTip("Switch average: week → month → year")
+        self.focus_average_label.setText(
+            "Average: set your start date" if average is None else f"Average: {average:,.1f} hours / {period}"
+        )
+        started = self.engine.focus_tracking_started_on
+        self.focus_start_button.setVisible(started is not None or average is None)
+        self.focus_start_button.setText(f"Since {started:%d %b %Y}…" if started else "Set start date…")
+        self.focus_start_button.setToolTip("Change the start date for this save")
+        self.focus_average_label.setToolTip(
+            "Current pace, including inactive days from the first day through today. "
+            "Weekly = daily average × 7; monthly = × (365.2425 / 12); yearly = × 365.2425."
+        )
 
     def subtract_time(self, mode: str) -> None:
         dialog = SubtractTimerTimeDialog(self.engine, mode, self)
@@ -1006,6 +1073,7 @@ class JournalScreen(Page):
             total = self.engine.timer_totals[f"{mode}_seconds"]
             label.setText(format_timer_total(total))
             self.subtract_buttons[mode].setEnabled(total > 0)
+        self.refresh_focus_average()
         if self.subtraction_dialog is not None:
             self.subtraction_dialog.refresh_preview()
         rewarded_quests = sum(not claim.get("is_replay", False) for claim in progress["quest_claims"])

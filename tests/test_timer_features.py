@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import date
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,9 +8,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialogButtonBox, QMessageBox
+from PySide6.QtWidgets import QDateEdit, QDialog, QDialogButtonBox, QMessageBox
 
 from learntrack.app import create_application
 from learntrack.defaults import create_default_state
@@ -121,6 +122,72 @@ class TimerEngineTests(unittest.TestCase):
         self.assertEqual(saves[0]["progress"]["timer"]["remaining_seconds"], 9)
         self.assertEqual(saves[0]["progress"]["timer_totals"]["focus_seconds"], 1)
 
+    def test_focus_average_includes_inactive_days_and_converts_periods(self):
+        self.engine.set_focus_tracking_start("2024-02-20")
+        self.state["progress"]["timer_totals"] = {"focus_seconds": 20 * 3600, "break_seconds": 99999}
+        today = date(2024, 3, 4)  # 14 inclusive days, including leap day.
+        for period, expected in (("week", 10), ("month", 20 / 14 * 365.2425 / 12),
+                                 ("year", 20 / 14 * 365.2425)):
+            self.engine.set_focus_average_period(period)
+            self.assertAlmostEqual(self.engine.focus_average_hours(today), expected)
+        self.engine.set_focus_average_period("week")
+        self.assertEqual(self.engine.focus_average_hours(date(2024, 3, 18)), 5)
+
+    def test_focus_average_first_day_and_clock_rollback_are_finite(self):
+        self.engine.set_focus_tracking_start("2024-01-01")
+        self.state["progress"]["timer_totals"]["focus_seconds"] = 2 * 3600
+        self.assertEqual(self.engine.focus_average_hours(date(2024, 1, 1)), 14)
+        self.assertEqual(self.engine.focus_average_hours(date(2023, 12, 31)), 14)
+
+    def test_start_is_personal_and_recorded_only_on_first_focus_tick(self):
+        self.assertEqual(self.engine.focus_average_hours(), 0)
+        self.assertIsNone(self.engine.focus_tracking_started_on)
+        self.start("break")
+        self.engine.advance_timer()
+        self.assertIsNone(self.engine.focus_tracking_started_on)
+        self.start()
+        self.assertIsNone(self.engine.focus_tracking_started_on)
+        self.engine.advance_timer()
+        self.assertEqual(self.engine.focus_tracking_started_on, date.today())
+        self.engine.set_focus_tracking_start("2024-01-01")
+        self.engine.subtract_timer_time("focus", 1)
+        self.engine.advance_timer()
+        self.assertEqual(self.engine.focus_tracking_started_on, date(2024, 1, 1))
+        self.assertIsNone(GameEngine(create_default_state()).focus_tracking_started_on)
+
+    def test_legacy_totals_need_a_date_without_losing_recorded_time(self):
+        del self.state["progress"]["focus_tracking_started_on"]
+        del self.state["profile"]["focus_average_period"]
+        self.state["progress"]["timer_totals"]["focus_seconds"] = 3600
+        engine = GameEngine(self.state)
+        self.assertEqual(engine.focus_average_period, "week")
+        self.assertIsNone(engine.focus_average_hours())
+        self.start()
+        self.engine.advance_timer()
+        self.assertIsNone(engine.focus_tracking_started_on)
+        engine.set_focus_tracking_start("2024-01-01")
+        engine.subtract_timer_time("focus", 1)
+        self.assertEqual(engine.focus_average_hours(date(2024, 1, 7)), 1)
+
+    def test_average_settings_validation(self):
+        for invalid in ("2024-02-30", "20240101", "bad", 123, False):
+            with self.subTest(value=invalid):
+                state = deepcopy(self.state)
+                state["progress"]["focus_tracking_started_on"] = invalid
+                with self.assertRaises(GameRuleError):
+                    validate_state(state)
+                with self.assertRaises(GameRuleError):
+                    self.engine.set_focus_tracking_start(invalid)
+        with self.assertRaises(GameRuleError):
+            self.engine.set_focus_tracking_start("9999-12-31")
+        for invalid in ("day", None, [], True):
+            state = deepcopy(self.state)
+            state["profile"]["focus_average_period"] = invalid
+            with self.assertRaises(GameRuleError):
+                validate_state(state)
+            with self.assertRaises(GameRuleError):
+                self.engine.set_focus_average_period(invalid)
+
 
 class TimerStorageTests(unittest.TestCase):
     def test_shared_save_relaunch_export_import_and_reset(self):
@@ -128,6 +195,8 @@ class TimerStorageTests(unittest.TestCase):
             path = Path(directory) / "shared" / "progress.json"
             desktop = SaveManager(path)
             engine = GameEngine(create_default_state(), desktop.save)
+            engine.set_focus_tracking_start("2024-01-01")
+            engine.set_focus_average_period("month")
             engine.set_timer_only_mode(True)
             engine.update_timer(1500, True)
             engine.advance_timer(12)
@@ -152,12 +221,16 @@ class TimerStorageTests(unittest.TestCase):
             self.assertFalse(imported["profile"]["timer_only_mode"])
             self.assertFalse(imported["progress"]["timer"]["running"])
             self.assertEqual(imported["progress"]["timer_totals"], {"focus_seconds": 10, "break_seconds": 6})
+            self.assertEqual(imported["progress"]["focus_tracking_started_on"], "2024-01-01")
+            self.assertEqual(imported["profile"]["focus_average_period"], "month")
             reloaded = SaveManager(path).load()
             self.assertEqual(reloaded["progress"], imported["progress"])
             reset, backup = laptop.reset()
             self.assertTrue(backup.is_file())
             self.assertFalse(reset["profile"]["timer_only_mode"])
             self.assertEqual(reset["progress"]["timer_totals"], {"focus_seconds": 0, "break_seconds": 0})
+            self.assertIsNone(reset["progress"]["focus_tracking_started_on"])
+            self.assertEqual(reset["profile"]["focus_average_period"], "week")
 
 
 class TimerUITests(unittest.TestCase):
@@ -176,6 +249,37 @@ class TimerUITests(unittest.TestCase):
         self.panel = self.window.screens["dashboard"].timer_panel
         self.journal = self.window.screens["journal"]
         self.settings = self.window.screens["settings"]
+
+    def test_focus_average_toggle_saves_period_and_updates_after_subtraction(self):
+        self.window.engine.set_focus_tracking_start(date.today().isoformat())
+        self.state["progress"]["timer_totals"]["focus_seconds"] = 2 * 3600
+        self.journal.refresh()
+        self.assertEqual(self.journal.focus_average_label.text(), "Average: 14.0 hours / week")
+        for period in ("month", "year", "week"):
+            QTest.mouseClick(self.journal.focus_average_button, Qt.MouseButton.LeftButton)
+            self.assertIn(f"hours / {period}", self.journal.focus_average_label.text())
+            loaded = self.storage.load()
+            self.assertEqual(GameEngine(loaded).focus_average_period, period)
+        self.window.engine.subtract_timer_time("focus", 3600)
+        self.journal.refresh()
+        self.assertEqual(self.journal.focus_average_label.text(), "Average: 7.0 hours / week")
+        self.assertEqual(self.journal.total_labels["break"].text(), "0h 00m 00s")
+
+    def test_legacy_start_date_picker_updates_only_this_save(self):
+        self.state["progress"]["timer_totals"]["focus_seconds"] = 3600
+        self.journal.refresh()
+        self.assertEqual(self.journal.focus_average_label.text(), "Average: set your start date")
+
+        def accept_date(dialog):
+            picker = dialog.findChild(QDateEdit)
+            picker.setDate(QDate(2024, 1, 1))
+            return QDialog.DialogCode.Accepted
+
+        with patch.object(QDialog, "exec", accept_date):
+            self.journal.choose_focus_start()
+        self.assertEqual(self.storage.load()["progress"]["focus_tracking_started_on"], "2024-01-01")
+        self.assertIn("Since 01 Jan 2024", self.journal.focus_start_button.text())
+        self.assertIsNone(create_default_state()["progress"]["focus_tracking_started_on"])
 
     def test_mode_switch_retains_one_running_timer_and_restricts_navigation(self):
         self.window.show()

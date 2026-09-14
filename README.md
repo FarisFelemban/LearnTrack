@@ -24,6 +24,8 @@ Turn on **Settings → Timer-only mode** to show just Timer, Total Time, and Set
 
 **Journal / Profile → Total Time** shows total focus and break time (also available directly as **Total Time** in timer-only mode). Running countdown seconds count even when you later reset an unfinished timer. Paused time and time with LearnTrack closed do not count. Totals start at zero for existing saves because earlier usage was not recorded. **Subtract time…** lets you preview and confirm a deduction from either total, down to zero; it cannot increase a total or change the active countdown. **Reset all progress** also clears these totals and returns to normal mode.
 
+The focus card also shows your average pace. Press **Week ↻** to cycle through hours per week, month, and year; your choice is saved. The calculation divides focus hours by calendar days from your start date through today (including inactive days), then multiplies by 7, 365.2425 / 12, or 365.2425. It shows your current pace immediately, even before a full period has passed. New saves record their start date on the first focus tick. Older saves with recorded totals ask you to **Set start date…**; click **Since…** to correct it later. The date belongs to that save and is retained when subtracting time. Resetting all progress clears it.
+
 ## Included gameplay
 
 - Dashboard with level progress, current run, optional backdrop artwork, activity, editable focus/break timer presets, and a resizable always-on-top mini timer with play/pause controls and completion notifications

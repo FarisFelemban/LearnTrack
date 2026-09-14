@@ -291,6 +291,7 @@ def create_default_state(player_name: str = "Adventurer") -> dict:
             "show_current_run_background": True,
             "timer_presets": {"focus": [20, 25, 30], "break": 40},
             "timer_only_mode": False,
+            "focus_average_period": "week",
         },
         "paths": deepcopy(DEFAULT_PATHS),
         "quests": deepcopy(DEFAULT_QUESTS),
@@ -306,6 +307,7 @@ def create_default_state(player_name: str = "Adventurer") -> dict:
             "purchases": [],
             "activity": [],
             "timer_totals": {"focus_seconds": 0, "break_seconds": 0},
+            "focus_tracking_started_on": None,
             "timer": {
                 "mode": "focus",
                 "duration_seconds": 25 * 60,
