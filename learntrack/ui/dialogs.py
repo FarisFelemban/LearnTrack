@@ -76,6 +76,57 @@ def _parse_bonuses(text: str, existing: list[dict] | None = None) -> list[dict]:
     return result
 
 
+def format_timer_total(seconds: int) -> str:
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:,}h {minutes:02d}m {seconds:02d}s"
+
+
+class SubtractTimerTimeDialog(SystemDialog):
+    def __init__(self, engine, mode: str, parent=None):
+        super().__init__(parent)
+        self.engine = engine
+        self.mode = mode
+        self.setWindowTitle(f"Subtract {mode} time")
+        self.setMinimumWidth(390)
+        form = QFormLayout(self)
+        self.hours = QSpinBox()
+        self.hours.setRange(0, 2_147_483_647)
+        self.minutes = QSpinBox()
+        self.minutes.setRange(0, 59)
+        self.seconds = QSpinBox()
+        self.seconds.setRange(0, 59)
+        for label, field in (("Hours", self.hours), ("Minutes", self.minutes), ("Seconds", self.seconds)):
+            form.addRow(label, field)
+            field.valueChanged.connect(self.refresh_preview)
+        self.preview = QLabel()
+        self.preview.setWordWrap(True)
+        form.addRow(self.preview)
+        self.buttons = _buttons(self, "Confirm subtraction")
+        form.addRow(self.buttons)
+        self.refresh_preview()
+
+    def amount_seconds(self) -> int:
+        return self.hours.value() * 3600 + self.minutes.value() * 60 + self.seconds.value()
+
+    def refresh_preview(self) -> None:
+        total = self.engine.timer_totals[f"{self.mode}_seconds"]
+        amount = self.amount_seconds()
+        valid = 0 < amount <= total
+        self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(valid)
+        result = f"After subtraction: {format_timer_total(total - amount)}" if valid else "Enter an amount greater than zero and no more than the total."
+        self.preview.setText(f"Current total: {format_timer_total(total)}\n{result}")
+
+    def accept(self) -> None:
+        try:
+            self.engine.subtract_timer_time(self.mode, self.amount_seconds())
+        except GameRuleError as exc:
+            QMessageBox.warning(self, "Cannot subtract time", str(exc))
+            self.refresh_preview()
+            return
+        super().accept()
+
+
 class NameSetupDialog(SystemDialog):
     def __init__(self, parent=None, current_name: str = ""):
         super().__init__(parent)

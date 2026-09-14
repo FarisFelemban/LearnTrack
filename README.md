@@ -20,6 +20,10 @@ python3 main.py
 
 On the first run, the game asks only for your player name. Progress saves automatically after every meaningful change in the operating system's normal application-data folder. In **Settings → Save Data**, you can choose a shared Dropbox or Google Drive folder; LearnTrack then saves `progress.json` in that folder and remembers the choice on that device. A running timer is restored paused after relaunch.
 
+Turn on **Settings → Timer-only mode** to show just Timer, Total Time, and Settings. Switch it off to return to the full app; your gameplay progress and active countdown are preserved. The mode and lifetime timer totals are stored in the same save. On each device, select the same synced folder and wait for Google Drive to finish syncing before opening LearnTrack there. An already-open app does not automatically load changes from another device.
+
+**Journal / Profile → Total Time** shows total focus and break time (also available directly as **Total Time** in timer-only mode). Running countdown seconds count even when you later reset an unfinished timer. Paused time and time with LearnTrack closed do not count. Totals start at zero for existing saves because earlier usage was not recorded. **Subtract time…** lets you preview and confirm a deduction from either total, down to zero; it cannot increase a total or change the active countdown. **Reset all progress** also clears these totals and returns to normal mode.
+
 ## Included gameplay
 
 - Dashboard with level progress, current run, optional backdrop artwork, activity, editable focus/break timer presets, and a resizable always-on-top mini timer with play/pause controls and completion notifications

@@ -77,6 +77,8 @@ def validate_state(state: object) -> None:
         state["profile"]["show_current_run_background"], bool
     ):
         raise GameRuleError("The current-run background setting must be true or false.")
+    if "timer_only_mode" in state["profile"] and not isinstance(state["profile"]["timer_only_mode"], bool):
+        raise GameRuleError("Timer-only mode must be true or false.")
     if "timer_presets" in state["profile"]:
         presets = state["profile"]["timer_presets"]
         if not isinstance(presets, dict) or set(presets) != {"focus", "break"}:
@@ -181,6 +183,12 @@ def validate_state(state: object) -> None:
                     raise GameRuleError("A quest replay needs an earlier rewarded completion.")
                 if claim.get("xp_awarded") != 0 or claim.get("gold_awarded") != 0:
                     raise GameRuleError("Quest replays cannot award XP or Gold.")
+    if "timer_totals" in progress:
+        totals = progress["timer_totals"]
+        if not isinstance(totals, dict) or set(totals) != {"focus_seconds", "break_seconds"}:
+            raise GameRuleError("Timer totals must contain focus_seconds and break_seconds.")
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in totals.values()):
+            raise GameRuleError("Timer totals must be nonnegative whole seconds.")
     timer = progress.get("timer")
     if not isinstance(timer, dict):
         raise GameRuleError("Timer data is missing.")
@@ -211,6 +219,32 @@ class GameEngine:
     @property
     def progress(self) -> dict:
         return self.state["progress"]
+
+    @property
+    def timer_only_mode(self) -> bool:
+        return self.state["profile"].get("timer_only_mode", False)
+
+    @property
+    def timer_totals(self) -> dict:
+        return self.progress.get("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+
+    def set_timer_only_mode(self, enabled: bool) -> None:
+        if not isinstance(enabled, bool):
+            raise GameRuleError("Timer-only mode must be true or false.")
+        self.state["profile"]["timer_only_mode"] = enabled
+        self._changed()
+
+    def subtract_timer_time(self, mode: str, seconds: int) -> None:
+        if mode not in ("focus", "break"):
+            raise GameRuleError("Choose focus or break time.")
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+            raise GameRuleError("Enter a positive whole number of seconds to subtract.")
+        key = f"{mode}_seconds"
+        if seconds > self.timer_totals[key]:
+            raise GameRuleError("You cannot subtract more than the recorded total.")
+        totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+        totals[key] -= seconds
+        self._changed()
 
     @property
     def level(self) -> int:
@@ -820,6 +854,20 @@ class GameEngine:
             "remaining_seconds": seconds,
             "running": False,
         }
+        self._changed()
+
+    def advance_timer(self, seconds: int = 1) -> None:
+        """Record countdown time only here, never from resets or duration edits."""
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+            raise GameRuleError("Elapsed time must be positive whole seconds.")
+        timer = self.progress["timer"]
+        if not timer["running"] or timer["remaining_seconds"] <= 0:
+            return
+        elapsed = min(seconds, timer["remaining_seconds"])
+        totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+        totals[f"{timer['mode']}_seconds"] += elapsed
+        timer["remaining_seconds"] -= elapsed
+        timer["running"] = timer["remaining_seconds"] > 0
         self._changed()
 
     def update_timer(self, remaining_seconds: int, running: bool) -> None:

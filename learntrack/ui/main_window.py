@@ -203,6 +203,8 @@ class MainWindow(QMainWindow):
     def navigate(self, name: str) -> None:
         if name not in self.screens:
             return
+        if self.engine.timer_only_mode and name not in ("dashboard", "journal", "settings"):
+            return
         screen = self.screens[name]
         screen.refresh()
         self.stack.setCurrentWidget(screen)
@@ -210,6 +212,15 @@ class MainWindow(QMainWindow):
             button.setChecked(key == name)
 
     def refresh_all(self) -> None:
+        timer_only = self.engine.timer_only_mode
+        for key, button in self.nav_buttons.items():
+            button.setVisible(not timer_only or key in ("dashboard", "journal", "settings"))
+        self.nav_buttons["dashboard"].setText("Timer" if timer_only else "Dashboard")
+        self.nav_buttons["journal"].setText("Total Time" if timer_only else "Journal / Profile")
+        if timer_only and self.stack.currentWidget() not in (
+            self.screens["dashboard"], self.screens["journal"], self.screens["settings"]
+        ):
+            self.navigate("dashboard")
         for screen in self.screens.values():
             screen.refresh()
         self._refresh_save_status()

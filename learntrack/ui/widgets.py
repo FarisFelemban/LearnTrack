@@ -403,11 +403,16 @@ class TimerPanel(Card):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         title_row = QHBoxLayout()
-        title = QLabel("[ TIMER ]")
-        title.setObjectName("sectionTitle")
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+        self.title_button = QPushButton("Timer")
+        self.title_button.setObjectName("timerTitle")
+        self.title_button.setCheckable(True)
+        self.title_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.title_button.clicked.connect(self.toggle_timer_only_mode)
         self.presets_button = QPushButton("Presets…")
         self.presets_button.clicked.connect(self.edit_presets)
-        title_row.addWidget(title)
+        title_row.addWidget(self.title_button)
         title_row.addWidget(self.presets_button)
         layout.addLayout(title_row)
         self.dial = CircularTimer()
@@ -442,6 +447,11 @@ class TimerPanel(Card):
         self.refresh_preset_buttons()
         self.refresh()
 
+    def toggle_timer_only_mode(self) -> None:
+        self.engine.set_timer_only_mode(not self.engine.timer_only_mode)
+        self.refresh()
+        self.timer_saved.emit()
+
     def refresh_preset_buttons(self) -> None:
         focus_minutes, break_minutes = self.engine.timer_presets
         for button, minutes in zip(self.focus_buttons, focus_minutes):
@@ -468,6 +478,10 @@ class TimerPanel(Card):
 
     def refresh(self) -> None:
         timer = self.engine.progress["timer"]
+        self.title_button.setChecked(self.engine.timer_only_mode)
+        self.title_button.setToolTip(
+            "Switch to normal mode" if self.engine.timer_only_mode else "Switch to timer-only mode"
+        )
         self.dial.set_time(timer["remaining_seconds"], timer["duration_seconds"], timer["mode"])
         self.start_button.setText("Pause" if timer["running"] else "Start")
         if timer["running"] and not self.clock.isActive():
@@ -543,10 +557,12 @@ class TimerPanel(Card):
 
     def _tick(self) -> None:
         timer = self.engine.progress["timer"]
+        if not timer["running"]:
+            return
         previous_remaining = timer["remaining_seconds"]
-        remaining = max(0, timer["remaining_seconds"] - 1)
-        # Save on each tick so closing at any moment preserves the remainder.
-        self.engine.update_timer(remaining, remaining > 0)
+        # Save the countdown and lifetime total together on each tick.
+        self.engine.advance_timer()
+        remaining = timer["remaining_seconds"]
         self.refresh()
         if remaining == 0:
             self.clock.stop()

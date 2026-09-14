@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from ..constants import DIFFICULTIES, PATH_STATUSES
 from ..engine import GameRuleError
 from .dialogs import BossDialog, BossImportDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
+from .dialogs import SubtractTimerTimeDialog, format_timer_total
 from .theme import COLORS
 from .widgets import AnimatedXPBar, BackdropPanel, Card, StatCard, TimerPanel
 
@@ -169,6 +170,8 @@ class DashboardScreen(Page):
         self.activity.setTextFormat(Qt.TextFormat.RichText)
         activity_layout.addWidget(self.activity)
         outer.addWidget(activity_card)
+        self.game_widgets = [self.level_card, self.xp_card, self.gold_card, self.path_card,
+                             self.xp_bar, self.hero, activity_card]
         self.refresh()
 
     def _open_current(self) -> None:
@@ -178,7 +181,10 @@ class DashboardScreen(Page):
     def refresh(self) -> None:
         profile = self.engine.state["profile"]
         animate = profile.get("animations_enabled", True)
-        self.greeting.setText(f"Welcome back, {profile['player_name']}")
+        timer_only = self.engine.timer_only_mode
+        self.greeting.setText("[ TIMER ]" if timer_only else f"Welcome back, {profile['player_name']}")
+        for widget in self.game_widgets:
+            widget.setVisible(not timer_only)
         self.level_card.set_value(self.engine.level)
         self.xp_card.set_number(self.engine.progress["xp"], animate=animate)
         self.gold_card.set_number(self.engine.progress["gold"], animate=animate)
@@ -936,7 +942,8 @@ class JournalScreen(Page):
         self.stats.setTextFormat(Qt.TextFormat.RichText)
         self.stats.setWordWrap(True)
         outer.addWidget(self.stats)
-        tabs = QTabWidget()
+        tabs = self.tabs = QTabWidget()
+        self.subtraction_dialog = None
         self.claims_table = QTableWidget(0, 6)
         self.claims_table.setHorizontalHeaderLabels(["Date", "Path", "Type", "Quest / Boss", "Reward", "Evidence"])
         self.claims_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
@@ -951,14 +958,59 @@ class JournalScreen(Page):
         tabs.addTab(self.reward_table, "Earned rewards")
         self.activity = QListWidget()
         tabs.addTab(self.activity, "Activity history")
+        self.total_time_page = QWidget()
+        totals_layout = QVBoxLayout(self.total_time_page)
+        self.total_labels = {}
+        self.subtract_buttons = {}
+        for mode in ("focus", "break"):
+            card = Card()
+            card_layout = QVBoxLayout(card)
+            caption = QLabel(f"Total {mode} time")
+            caption.setObjectName("sectionTitle")
+            card_layout.addWidget(caption)
+            value = QLabel()
+            value.setObjectName("pageTitle")
+            value.setWordWrap(True)
+            card_layout.addWidget(value)
+            subtract = QPushButton("Subtract time…")
+            subtract.clicked.connect(lambda checked=False, kind=mode: self.subtract_time(kind))
+            card_layout.addWidget(subtract, alignment=Qt.AlignmentFlag.AlignLeft)
+            self.total_labels[mode] = value
+            self.subtract_buttons[mode] = subtract
+            totals_layout.addWidget(card)
+        totals_layout.addStretch()
+        tabs.addTab(self.total_time_page, "Total Time")
         outer.addWidget(tabs, 1)
         self.refresh()
 
+    def subtract_time(self, mode: str) -> None:
+        dialog = SubtractTimerTimeDialog(self.engine, mode, self)
+        self.subtraction_dialog = dialog
+        try:
+            if dialog.exec() == dialog.DialogCode.Accepted:
+                self.changed.emit()
+        finally:
+            self.subtraction_dialog = None
+            dialog.deleteLater()
+
     def refresh(self) -> None:
         progress = self.engine.progress
+        timer_only = self.engine.timer_only_mode
+        for index in range(self.tabs.count() - 1):
+            self.tabs.setTabVisible(index, not timer_only)
+        self.tabs.tabBar().setVisible(not timer_only)
+        self.stats.setVisible(not timer_only)
+        if timer_only:
+            self.tabs.setCurrentWidget(self.total_time_page)
+        for mode, label in self.total_labels.items():
+            total = self.engine.timer_totals[f"{mode}_seconds"]
+            label.setText(format_timer_total(total))
+            self.subtract_buttons[mode].setEnabled(total > 0)
+        if self.subtraction_dialog is not None:
+            self.subtraction_dialog.refresh_preview()
         rewarded_quests = sum(not claim.get("is_replay", False) for claim in progress["quest_claims"])
         replay_count = sum(claim.get("is_replay", False) for claim in progress["quest_claims"])
-        self.title.setText(f"{self.engine.state['profile']['player_name']} — Player Journal")
+        self.title.setText("[ TOTAL TIME ]" if timer_only else f"{self.engine.state['profile']['player_name']} — Player Journal")
         self.stats.setText(
             f"<b style='color:{COLORS['accent']}'>Level {self.engine.level}</b> &nbsp;•&nbsp; "
             f"{progress['xp']:,} total XP &nbsp;•&nbsp; "
@@ -1023,6 +1075,9 @@ class SettingsScreen(Page):
         self.current_run_background = QCheckBox("Show artwork behind Current Run")
         self.current_run_background.toggled.connect(self.save_current_run_background)
         form.addWidget(self.current_run_background, 3, 0, 1, 3)
+        self.timer_only = QCheckBox("Timer-only mode")
+        self.timer_only.toggled.connect(self.save_timer_only_mode)
+        form.addWidget(self.timer_only, 4, 0, 1, 3)
         outer.addWidget(profile)
         content_import = Card()
         import_layout = QVBoxLayout(content_import)
@@ -1078,11 +1133,17 @@ class SettingsScreen(Page):
         details.setObjectName("muted")
         about_layout.addWidget(details)
         outer.addWidget(about)
+        self.game_widgets = [self.current_run_background, content_import, about]
         outer.addStretch()
         self.refresh()
 
     def refresh(self) -> None:
         self.name.setText(self.engine.state["profile"]["player_name"])
+        self.timer_only.blockSignals(True)
+        self.timer_only.setChecked(self.engine.timer_only_mode)
+        self.timer_only.blockSignals(False)
+        for widget in self.game_widgets:
+            widget.setVisible(not self.engine.timer_only_mode)
         self.animations.blockSignals(True)
         self.animations.setChecked(self.engine.state["profile"].get("animations_enabled", True))
         self.animations.blockSignals(False)
@@ -1108,6 +1169,10 @@ class SettingsScreen(Page):
             self.changed.emit()
         except GameRuleError as exc:
             _message(self, "Cannot save name", exc)
+
+    def save_timer_only_mode(self, enabled: bool) -> None:
+        self.engine.set_timer_only_mode(enabled)
+        self.changed.emit()
 
     def save_animations(self, enabled: bool) -> None:
         self.engine.set_animations(enabled)
