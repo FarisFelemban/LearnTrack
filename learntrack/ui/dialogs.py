@@ -593,6 +593,30 @@ class BossImportDialog(SystemDialog):
         super().accept()
 
 
+class StopwatchSettingsDialog(SystemDialog):
+    def __init__(self, enabled: bool, minutes: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Stopwatch Settings")
+        form = QFormLayout(self)
+        self.enabled = QCheckBox("Enable study check-ins")
+        self.enabled.setChecked(enabled)
+        self.minutes = QSpinBox()
+        self.minutes.setRange(1, 1440)
+        self.minutes.setSuffix(" min")
+        self.minutes.setValue(minutes)
+        self.minutes.setEnabled(enabled)
+        self.enabled.toggled.connect(self.minutes.setEnabled)
+        form.addRow(self.enabled)
+        form.addRow("Check in every", self.minutes)
+        note = QLabel("Focus pauses until you answer. Breaks are not interrupted.")
+        note.setWordWrap(True)
+        form.addRow(note)
+        form.addRow(_buttons(self))
+
+    def data(self) -> tuple[bool, int]:
+        return self.enabled.isChecked(), self.minutes.value()
+
+
 class TimerPresetsDialog(SystemDialog):
     """Edit the three focus shortcuts and one break shortcut."""
 

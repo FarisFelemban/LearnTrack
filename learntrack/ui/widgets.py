@@ -22,7 +22,15 @@ from PySide6.QtWidgets import (
 
 from ..constants import BACKDROP_PATH
 from ..engine import next_level_progress
-from .dialogs import TimerPresetsDialog
+from .dialogs import TimerPresetsDialog, StopwatchSettingsDialog
+
+
+def format_clock_time(seconds: int, stopwatch: bool = False) -> str:
+    minutes, seconds = divmod(max(0, seconds), 60)
+    if stopwatch and minutes >= 60:
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
 from .theme import COLORS, DISPLAY_FONT, paint_system_panel
 
 
@@ -156,6 +164,7 @@ class CircularTimer(QWidget):
         self.duration = 1
         self.remaining = 0
         self.mode = "focus"
+        self.stopwatch = False
         self.editor = QLineEdit(self)
         self.editor.setObjectName("timerEditor")
         self.editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -166,7 +175,10 @@ class CircularTimer(QWidget):
         self.editor.editingFinished.connect(self._submit_edit)
         self.editor.hide()
 
-    def set_time(self, remaining: int, duration: int, mode: str) -> None:
+    def set_time(self, remaining: int, duration: int, mode: str, stopwatch: bool = False) -> None:
+        self.stopwatch = stopwatch
+        self.setAccessibleName("Stopwatch elapsed time" if stopwatch else "Timer countdown")
+        self.setAccessibleDescription("" if stopwatch else "Click the time to edit it in minutes and seconds")
         self.remaining = max(0, remaining)
         self.duration = max(1, duration)
         self.mode = mode
@@ -180,14 +192,14 @@ class CircularTimer(QWidget):
         super().resizeEvent(event)
 
     def mouseReleaseEvent(self, event):  # noqa: N802 - Qt API
-        if event.button() == Qt.MouseButton.LeftButton and self._text_rect().contains(event.position().toPoint()):
+        if not self.stopwatch and event.button() == Qt.MouseButton.LeftButton and self._text_rect().contains(event.position().toPoint()):
             self.edit_requested.emit()
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):  # noqa: N802 - Qt API
         cursor = (
             Qt.CursorShape.PointingHandCursor
-            if self._text_rect().contains(event.position().toPoint())
+            if not self.stopwatch and self._text_rect().contains(event.position().toPoint())
             else Qt.CursorShape.ArrowCursor
         )
         self.setCursor(cursor)
@@ -246,7 +258,7 @@ class CircularTimer(QWidget):
         painter.drawArc(rect, 0, 360 * 16)
         color = QColor(COLORS["muted"] if self.mode == "break" else COLORS["accent"])
         painter.setPen(QPen(color, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        span = int(360 * 16 * self.remaining / self.duration)
+        span = 360 * 16 if self.stopwatch else int(360 * 16 * self.remaining / self.duration)
         painter.drawArc(rect, 90 * 16, -span)
         minutes, seconds = divmod(self.remaining, 60)
         painter.setPen(QColor("#f1fbff"))
@@ -255,7 +267,11 @@ class CircularTimer(QWidget):
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         if not self.editor.isVisible():
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{minutes:02d}:{seconds:02d}")
+            text = format_clock_time(self.remaining, self.stopwatch)
+            while painter.fontMetrics().horizontalAdvance(text) > rect.width() - 16 and font.pointSize() > 10:
+                font.setPointSize(font.pointSize() - 1)
+                painter.setFont(font)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
 
 class MiniTimerWindow(QWidget):
@@ -338,20 +354,23 @@ class MiniTimerWindow(QWidget):
         painter.end()
         return QIcon(pixmap)
 
-    def set_timer(self, remaining_seconds: int, _mode: str, running: bool) -> None:
+    def set_timer(self, remaining_seconds: int, _mode: str, running: bool, stopwatch: bool = False) -> None:
         minutes, seconds = divmod(max(0, remaining_seconds), 60)
-        self.time_label.setText(f"{minutes:02d}:{seconds:02d}")
+        self.time_label.setText(format_clock_time(remaining_seconds, stopwatch))
 
-        if remaining_seconds == 0:
+        if remaining_seconds == 0 and not stopwatch:
             control_description = "Restart timer"
         elif running:
             control_description = "Pause timer"
         else:
             control_description = "Resume timer"
+        if stopwatch:
+            control_description = "Pause stopwatch" if running else "Start stopwatch"
         self.toggle_button.setIcon(self._pause_icon if running else self._play_icon)
         self.toggle_button.setToolTip(control_description)
         self.toggle_button.setAccessibleName(control_description)
-        self.setWindowTitle(f"LearnTrack Timer — {self.time_label.text()}")
+        clock_name = "Stopwatch" if stopwatch else "Timer"
+        self.setWindowTitle(f"LearnTrack {clock_name} — {self.time_label.text()}")
 
     def resizeEvent(self, event):  # noqa: N802 - Qt API
         self.size_grip.move(self.width() - self.size_grip.width(), self.height() - self.size_grip.height())
@@ -389,6 +408,7 @@ class MiniTimerWindow(QWidget):
 
 
 class TimerPanel(Card):
+    check_in_requested = Signal()
     timer_saved = Signal()
     timer_started = Signal()
     timer_finished = Signal(str)
@@ -412,7 +432,12 @@ class TimerPanel(Card):
         self.title_button.clicked.connect(self.toggle_timer_only_mode)
         self.presets_button = QPushButton("Presets…")
         self.presets_button.clicked.connect(self.edit_presets)
+        self.stopwatch_button = QPushButton("Stopwatch")
+        self.stopwatch_button.setProperty("clockSelector", True)
+        self.stopwatch_button.setCheckable(True)
+        self.stopwatch_button.clicked.connect(self.switch_clock)
         title_row.addWidget(self.title_button)
+        title_row.addWidget(self.stopwatch_button)
         title_row.addWidget(self.presets_button)
         layout.addLayout(title_row)
         self.dial = CircularTimer()
@@ -432,6 +457,16 @@ class TimerPanel(Card):
         self.break_button.clicked.connect(self.choose_break_preset)
         duration_row.addWidget(self.break_button)
         layout.addLayout(duration_row)
+        self.category_buttons = []
+        category_row = QHBoxLayout()
+        for mode in ("focus", "break"):
+            button = QPushButton(mode.title())
+            button.setProperty("clockSelector", True)
+            button.setCheckable(True)
+            button.clicked.connect(lambda checked=False, value=mode: self.select_category(value))
+            category_row.addWidget(button)
+            self.category_buttons.append(button)
+        layout.addLayout(category_row)
         control_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.setProperty("accent", True)
@@ -452,6 +487,17 @@ class TimerPanel(Card):
         self.refresh()
         self.timer_saved.emit()
 
+    def switch_clock(self) -> None:
+        self.dial.leave_edit_mode()
+        self.engine.select_clock("stopwatch" if self.stopwatch_button.isChecked() else "timer")
+        self.refresh()
+        self.timer_saved.emit()
+
+    def select_category(self, mode: str) -> None:
+        self.engine.select_stopwatch_mode(mode)
+        self.refresh()
+        self.timer_saved.emit()
+
     def refresh_preset_buttons(self) -> None:
         focus_minutes, break_minutes = self.engine.timer_presets
         for button, minutes in zip(self.focus_buttons, focus_minutes):
@@ -467,6 +513,13 @@ class TimerPanel(Card):
         self.choose("break", break_minutes)
 
     def edit_presets(self) -> None:
+        if self.engine.clock_type == "stopwatch":
+            watch = self.engine.stopwatch
+            dialog = StopwatchSettingsDialog(watch["check_in_enabled"], watch["check_in_minutes"], self)
+            if dialog.exec() == dialog.DialogCode.Accepted:
+                self.engine.set_check_in_settings(*dialog.data())
+                self.timer_saved.emit()
+            return
         focus_minutes, break_minutes = self.engine.timer_presets
         dialog = TimerPresetsDialog(focus_minutes, break_minutes, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -478,11 +531,23 @@ class TimerPanel(Card):
 
     def refresh(self) -> None:
         timer = self.engine.progress["timer"]
+        stopwatch = self.engine.clock_type == "stopwatch"
+        self.stopwatch_button.setChecked(stopwatch)
+        self.presets_button.setText("Settings…" if stopwatch else "Presets…")
+        for button in self.focus_buttons + [self.break_button]:
+            button.setVisible(not stopwatch)
+        for button, mode in zip(self.category_buttons, ("focus", "break")):
+            button.setVisible(stopwatch)
+            button.setChecked(stopwatch and self.engine.stopwatch["mode"] == mode)
         self.title_button.setChecked(self.engine.timer_only_mode)
         self.title_button.setToolTip(
             "Switch to normal mode" if self.engine.timer_only_mode else "Switch to timer-only mode"
         )
-        self.dial.set_time(timer["remaining_seconds"], timer["duration_seconds"], timer["mode"])
+        if stopwatch:
+            timer = self.engine.stopwatch
+            self.dial.set_time(timer[f"{timer['mode']}_seconds"], 1, timer["mode"], True)
+        else:
+            self.dial.set_time(timer["remaining_seconds"], timer["duration_seconds"], timer["mode"])
         self.start_button.setText("Pause" if timer["running"] else "Start")
         if timer["running"] and not self.clock.isActive():
             self.clock.start()
@@ -496,6 +561,8 @@ class TimerPanel(Card):
         self.timer_saved.emit()
 
     def begin_duration_edit(self) -> None:
+        if self.engine.clock_type == "stopwatch":
+            return
         timer = self.engine.progress["timer"]
         self.clock.stop()
         self.engine.update_timer(timer["remaining_seconds"], False)
@@ -538,6 +605,13 @@ class TimerPanel(Card):
         self.timer_saved.emit()
 
     def toggle(self) -> None:
+        if self.engine.clock_type == "stopwatch":
+            self.engine.set_stopwatch_running(not self.engine.stopwatch["running"])
+            self.refresh()
+            self.timer_saved.emit()
+            if self.engine.stopwatch["running"]:
+                self.timer_started.emit()
+            return
         timer = self.engine.progress["timer"]
         if timer["remaining_seconds"] == 0:
             timer["remaining_seconds"] = timer["duration_seconds"]
@@ -549,6 +623,11 @@ class TimerPanel(Card):
             self.timer_started.emit()
 
     def reset(self) -> None:
+        if self.engine.clock_type == "stopwatch":
+            self.engine.reset_stopwatch()
+            self.refresh()
+            self.timer_saved.emit()
+            return
         timer = self.engine.progress["timer"]
         self.clock.stop()
         self.engine.update_timer(timer["duration_seconds"], False)
@@ -556,6 +635,13 @@ class TimerPanel(Card):
         self.timer_saved.emit()
 
     def _tick(self) -> None:
+        if self.engine.clock_type == "stopwatch":
+            due = self.engine.advance_stopwatch()
+            self.refresh()
+            self.timer_saved.emit()
+            if due:
+                self.check_in_requested.emit()
+            return
         timer = self.engine.progress["timer"]
         if not timer["running"]:
             return

@@ -217,6 +217,21 @@ def validate_state(state: object) -> None:
             raise GameRuleError(f"Timer field '{field}' is invalid.")
     if timer["remaining_seconds"] > timer["duration_seconds"]:
         raise GameRuleError("Timer remaining time exceeds its duration.")
+    if progress.get("clock_type", "timer") not in ("timer", "stopwatch"):
+        raise GameRuleError("Invalid clock type.")
+    if "stopwatch" in progress:
+        watch = progress["stopwatch"]
+        if not isinstance(watch, dict) or watch.get("mode") not in ("focus", "break"):
+            raise GameRuleError("Invalid stopwatch data.")
+        for field in ("running", "check_in_enabled"):
+            if not isinstance(watch.get(field), bool):
+                raise GameRuleError(f"Invalid stopwatch {field}.")
+        for field in ("focus_seconds", "break_seconds", "check_in_seconds", "check_in_minutes"):
+            value = watch.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise GameRuleError(f"Invalid stopwatch {field}.")
+        if not 1 <= watch["check_in_minutes"] <= 1440:
+            raise GameRuleError("Check-in interval must be 1–1,440 minutes.")
     current = progress.get("current_run")
     if current is not None:
         if not isinstance(current, dict) or current.get("kind") not in ("quest", "boss"):
@@ -895,6 +910,84 @@ class GameEngine:
             raise GameRuleError("Choose a valid timer mode and duration.")
         self.set_timer_seconds(mode, int(minutes * 60))
 
+    @property
+    def clock_type(self) -> str:
+        return self.progress.get("clock_type", "timer")
+
+    @property
+    def stopwatch(self) -> dict:
+        return self.progress.setdefault("stopwatch", {
+            "mode": "focus", "focus_seconds": 0, "break_seconds": 0,
+            "running": False, "check_in_enabled": False,
+            "check_in_minutes": 30, "check_in_seconds": 0,
+        })
+
+    def select_clock(self, clock_type: str) -> None:
+        if clock_type not in ("timer", "stopwatch"):
+            raise GameRuleError("Invalid clock type.")
+        self.progress["timer"]["running"] = False
+        self.stopwatch["running"] = False
+        self.progress["clock_type"] = clock_type
+        self._changed()
+
+    def select_stopwatch_mode(self, mode: str) -> None:
+        if mode not in ("focus", "break"):
+            raise GameRuleError("Invalid stopwatch mode.")
+        self.stopwatch.update(mode=mode, running=False)
+        self._changed()
+
+    def set_stopwatch_running(self, running: bool) -> None:
+        self.stopwatch["running"] = bool(running) and self.clock_type == "stopwatch"
+        if self.stopwatch["running"]:
+            self.progress["timer"]["running"] = False
+        self._changed()
+
+    def reset_stopwatch(self) -> None:
+        watch = self.stopwatch
+        watch["running"] = False
+        watch[f"{watch['mode']}_seconds"] = 0
+        if watch["mode"] == "focus":
+            watch["check_in_seconds"] = 0
+        self._changed()
+
+    def set_check_in_settings(self, enabled: bool, minutes: int) -> None:
+        if not isinstance(enabled, bool) or isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 1440:
+            raise GameRuleError("Choose a check-in interval from 1 to 1,440 minutes.")
+        watch = self.stopwatch
+        if (enabled, minutes) != (watch["check_in_enabled"], watch["check_in_minutes"]):
+            watch.update(check_in_enabled=enabled, check_in_minutes=minutes, check_in_seconds=0)
+        self._changed()
+
+    def answer_check_in(self, resume: bool) -> None:
+        self.stopwatch["check_in_seconds"] = 0
+        self.set_stopwatch_running(resume)
+
+    def advance_stopwatch(self, seconds: int = 1) -> bool:
+        """Count active time and return whether a study check-in is due."""
+        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+            raise GameRuleError("Elapsed time must be positive whole seconds.")
+        watch = self.stopwatch
+        if self.clock_type != "stopwatch" or not watch["running"]:
+            return False
+        check_in = watch["check_in_enabled"] and watch["mode"] == "focus"
+        elapsed = seconds
+        if check_in:
+            elapsed = min(seconds, max(0, watch["check_in_minutes"] * 60 - watch["check_in_seconds"]))
+            watch["check_in_seconds"] += elapsed
+        watch[f"{watch['mode']}_seconds"] += elapsed
+        self._record_clock_time(watch["mode"], elapsed)
+        due = check_in and watch["check_in_seconds"] >= watch["check_in_minutes"] * 60
+        if due:
+            watch["running"] = False
+        self._changed()
+        return due
+
+    def _record_clock_time(self, mode: str, elapsed: int) -> None:
+        totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+        if elapsed and mode == "focus" and totals["focus_seconds"] == 0 and self.focus_tracking_started_on is None:
+            self.progress["focus_tracking_started_on"] = date.today().isoformat()
+        totals[f"{mode}_seconds"] += elapsed
+
     def set_timer_seconds(self, mode: str, seconds: int) -> None:
         if mode not in ("focus", "break") or not isinstance(seconds, int) or seconds <= 0:
             raise GameRuleError("Choose a valid timer mode and duration.")
@@ -911,13 +1004,10 @@ class GameEngine:
         if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
             raise GameRuleError("Elapsed time must be positive whole seconds.")
         timer = self.progress["timer"]
-        if not timer["running"] or timer["remaining_seconds"] <= 0:
+        if self.clock_type != "timer" or not timer["running"] or timer["remaining_seconds"] <= 0:
             return
         elapsed = min(seconds, timer["remaining_seconds"])
-        totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
-        if timer["mode"] == "focus" and totals["focus_seconds"] == 0 and self.focus_tracking_started_on is None:
-            self.progress["focus_tracking_started_on"] = date.today().isoformat()
-        totals[f"{timer['mode']}_seconds"] += elapsed
+        self._record_clock_time(timer["mode"], elapsed)
         timer["remaining_seconds"] -= elapsed
         timer["running"] = timer["remaining_seconds"] > 0
         self._changed()
@@ -925,7 +1015,9 @@ class GameEngine:
     def update_timer(self, remaining_seconds: int, running: bool) -> None:
         timer = self.progress["timer"]
         timer["remaining_seconds"] = max(0, min(int(remaining_seconds), timer["duration_seconds"]))
-        timer["running"] = bool(running) and timer["remaining_seconds"] > 0
+        timer["running"] = bool(running) and timer["remaining_seconds"] > 0 and self.clock_type == "timer"
+        if timer["running"]:
+            self.stopwatch["running"] = False
         self._changed()
 
     def _quest_update_data(self, data: dict) -> dict:

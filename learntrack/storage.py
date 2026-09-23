@@ -105,6 +105,7 @@ class SaveManager:
             validate_state(state)
             # A running timer always comes back paused after relaunch.
             state["progress"]["timer"]["running"] = False
+            self._pause_stopwatch(state)
             self._known_signature = self._file_signature()
             return state
         except (OSError, json.JSONDecodeError, GameRuleError, TypeError, KeyError) as exc:
@@ -160,9 +161,18 @@ class SaveManager:
                 state = json.load(handle)
             validate_state(state)
             state["progress"]["timer"]["running"] = False
+            self._pause_stopwatch(state)
             return state
         except (OSError, json.JSONDecodeError, GameRuleError, TypeError, KeyError) as exc:
             raise GameRuleError(f"This file is not a valid LearnTrack save: {exc}") from exc
+
+    @staticmethod
+    def _pause_stopwatch(state: dict) -> None:
+        watch = state["progress"].get("stopwatch")
+        if watch is not None:
+            watch["running"] = False
+            if watch["check_in_seconds"] >= watch["check_in_minutes"] * 60:
+                watch["check_in_seconds"] = 0
 
     def replace_with_import(self, state: dict) -> Path | None:
         validate_state(state)

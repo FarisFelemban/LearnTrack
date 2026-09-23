@@ -172,6 +172,7 @@ QPushButton {
 }
 QPushButton:hover { background-color: #193a54; border-color: @accent; }
 QPushButton:pressed { background-color: #123956; }
+QPushButton[clockSelector="true"]:checked { background-color: #15436a; border-color: @accent; }
 QPushButton:disabled { color: #536578; background-color: #101722; border-color: #202c3a; }
 QPushButton[accent="true"] {
     background-color: #164971;

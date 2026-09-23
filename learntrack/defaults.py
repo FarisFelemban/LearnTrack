@@ -308,6 +308,12 @@ def create_default_state(player_name: str = "Adventurer") -> dict:
             "activity": [],
             "timer_totals": {"focus_seconds": 0, "break_seconds": 0},
             "focus_tracking_started_on": None,
+            "clock_type": "timer",
+            "stopwatch": {
+                "mode": "focus", "focus_seconds": 0, "break_seconds": 0,
+                "running": False, "check_in_enabled": False,
+                "check_in_minutes": 30, "check_in_seconds": 0,
+            },
             "timer": {
                 "mode": "focus",
                 "duration_seconds": 25 * 60,

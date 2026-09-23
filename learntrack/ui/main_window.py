@@ -186,6 +186,8 @@ class MainWindow(QMainWindow):
         self._setup_tray_icon()
         self.screens["dashboard"].navigate.connect(self.navigate)
         timer_panel = self.screens["dashboard"].timer_panel
+        self._check_in_dialog = None
+        timer_panel.check_in_requested.connect(self._show_check_in)
         self.mini_timer.toggle_requested.connect(timer_panel.toggle)
         timer_panel.timer_started.connect(self._timer_started)
         timer_panel.timer_finished.connect(self._timer_finished)
@@ -262,6 +264,47 @@ class MainWindow(QMainWindow):
         self._mini_timer_hidden = False
         self._show_mini_timer()
 
+    def _dismiss_check_in(self) -> None:
+        dialog = self._check_in_dialog
+        self._check_in_dialog = None
+        if dialog is not None:
+            dialog.reject()
+            dialog.deleteLater()
+
+    def _show_check_in(self) -> None:
+        if self._check_in_dialog is not None:
+            return
+        state = self.engine.state
+        dialog = QMessageBox(self)
+        dialog.setOption(QMessageBox.Option.DontUseNativeDialog, True)
+        dialog.setWindowTitle("Study check-in")
+        dialog.setText("Are you still working?")
+        dialog.setInformativeText("The stopwatch is paused. Choose Yes to continue.")
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        dialog.setDefaultButton(QMessageBox.StandardButton.No)
+        dialog.setEscapeButton(QMessageBox.StandardButton.No)
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self._check_in_dialog = dialog
+
+        def answered(result):
+            if self._check_in_dialog is not dialog or self.engine.state is not state:
+                return
+            self._check_in_dialog = None
+            resume = result == QMessageBox.StandardButton.Yes
+            self.engine.answer_check_in(resume)
+            self.refresh_all()
+            if resume:
+                self._timer_started()
+            dialog.deleteLater()
+
+        dialog.finished.connect(answered)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        if not flash_windows_taskbar(self):
+            QApplication.alert(dialog, 5_000)
+
     def _timer_finished(self, mode: str) -> None:
         mode_name = "Break" if mode == "break" else "Focus"
         self._sync_timer_surfaces()
@@ -277,14 +320,20 @@ class MainWindow(QMainWindow):
 
     def _sync_timer_surfaces(self) -> None:
         timer = self.engine.progress["timer"]
-        remaining = timer["remaining_seconds"]
+        stopwatch = self.engine.clock_type == "stopwatch"
+        if stopwatch:
+            timer = self.engine.stopwatch
+        remaining = timer[f"{timer['mode']}_seconds"] if stopwatch else timer["remaining_seconds"]
         mode = timer["mode"]
         running = timer["running"]
-        self.mini_timer.set_timer(remaining, mode, running)
+        self.mini_timer.set_timer(remaining, mode, running, stopwatch)
 
         minutes, seconds = divmod(remaining, 60)
         mode_name = "Break" if mode == "break" else "Focus"
-        if remaining == 0:
+        if stopwatch:
+            status = "running" if running else "paused"
+            tooltip = f"LearnTrack — {mode_name} stopwatch {status}: {self.mini_timer.time_label.text()} elapsed"
+        elif remaining == 0:
             tooltip = f"LearnTrack — {mode_name} timer complete"
         elif running:
             tooltip = f"LearnTrack — {mode_name} {minutes:02d}:{seconds:02d} remaining"
@@ -380,6 +429,7 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             self.storage = synced_storage
+            self._dismiss_check_in()
             self.engine.state = synced_state
             self._saving_paused_reason = None
             SaveManager.remember_path(destination)
@@ -432,6 +482,7 @@ class MainWindow(QMainWindow):
             return
         try:
             backup = self.storage.replace_with_import(imported)
+            self._dismiss_check_in()
             self.engine.state = imported
             self._saving_paused_reason = None
             self.refresh_all()
@@ -453,6 +504,7 @@ class MainWindow(QMainWindow):
         try:
             current_name = self.engine.state["profile"]["player_name"]
             state, backup = self.storage.reset(current_name)
+            self._dismiss_check_in()
             self.engine.state = state
             self._saving_paused_reason = None
             self.refresh_all()
@@ -462,7 +514,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Reset failed", str(exc))
 
     def closeEvent(self, event):  # noqa: N802 - Qt API
+        self._dismiss_check_in()
         self.screens["dashboard"].timer_panel.clock.stop()
+        self.engine.stopwatch["running"] = False
         timer = self.engine.progress["timer"]
         # Restored timers are deliberately paused, never silently running.
         self.engine.update_timer(timer["remaining_seconds"], False)
