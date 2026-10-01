@@ -42,7 +42,8 @@ from ..engine import GameRuleError
 from .dialogs import BossDialog, BossImportDialog, CompletionDialog, PathDialog, QuestDialog, QuestImportDialog, RewardDialog
 from .dialogs import SubtractTimerTimeDialog, format_timer_total
 from .theme import COLORS
-from .widgets import AnimatedXPBar, BackdropPanel, Card, StatCard, TimerPanel
+from .heatmap import FocusHeatmap
+from .widgets import AnimatedXPBar, BackdropPanel, Card, PreviewLabel, StatCard, TimerPanel
 
 
 def _friendly_time(value: str) -> str:
@@ -101,70 +102,74 @@ class DashboardScreen(Page):
         page_layout.addWidget(scroll)
         outer = QVBoxLayout(content)
         outer.setContentsMargins(22, 18, 22, 22)
-        heading = QHBoxLayout()
-        title_box = QVBoxLayout()
-        self.greeting = QLabel()
-        self.greeting.setObjectName("pageTitle")
-        self.greeting.setWordWrap(True)
-        title_box.addWidget(self.greeting)
-        heading.addLayout(title_box)
-
-        outer.addLayout(heading)
         outer.setSpacing(12)
-
-        stats = QHBoxLayout()
-        self.level_card = StatCard("Level", color_name="cyan")
-        self.xp_card = StatCard("Total XP", color_name="magenta")
-        self.gold_card = StatCard("Available Gold", color_name="gold")
-        self.path_card = StatCard("Active path", color_name="cyan")
-        self.path_card.value_label.setObjectName("pathValue")
-        self.path_card.value_label.setMinimumWidth(0)
-        self.path_card.value_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        for card in (self.level_card, self.xp_card, self.gold_card, self.path_card):
-            stats.addWidget(card, 1)
-        outer.addLayout(stats)
-
-        self.xp_bar = AnimatedXPBar()
-        outer.addWidget(self.xp_bar)
-
         main_row = QHBoxLayout()
+        main_row.setSpacing(12)
+        self.left_column = QWidget()
+        left_layout = QVBoxLayout(self.left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+        self.stats_panel = Card()
+        stats_layout = QVBoxLayout(self.stats_panel)
+        stats_layout.setContentsMargins(14, 10, 14, 10)
+        stats_layout.setSpacing(7)
+        stats = QGridLayout()
+        stats.setHorizontalSpacing(12)
+        stats.setVerticalSpacing(7)
+        self.level_card = StatCard("Level", color_name="cyan", compact=True, inline=True)
+        self.xp_card = StatCard("Total XP", color_name="magenta", compact=True, inline=True)
+        self.gold_card = StatCard("Gold", color_name="gold", compact=True, inline=True)
+        for column, card in enumerate((self.level_card, self.xp_card)):
+            stats.addWidget(card, 0, column)
+            stats.setColumnStretch(column, 1)
+        stats.addWidget(self.gold_card, 1, 0)
+        self.path_card = StatCard("Active path", compact=True, inline=True)
+        self.path_card.value_label.setObjectName("compactPathValue")
+        stats.addWidget(self.path_card, 1, 1)
+        stats_layout.addLayout(stats)
+        self.xp_bar = AnimatedXPBar()
+        stats_layout.addWidget(self.xp_bar)
+        left_layout.addWidget(self.stats_panel)
+
         self.hero = BackdropPanel()
-        self.hero.setMinimumHeight(290)
+        self.hero.setFixedHeight(200)
         self.hero.setMinimumWidth(0)
         hero_layout = QVBoxLayout(self.hero)
-        hero_layout.setContentsMargins(20, 18, 20, 18)
+        hero_layout.setContentsMargins(14, 10, 14, 10)
+        hero_layout.setSpacing(5)
         current_caption = QLabel("[ CURRENT RUN ]")
         current_caption.setObjectName("systemHeading")
         hero_layout.addWidget(current_caption)
-        self.current_title = QLabel()
-        self.current_title.setObjectName("pageTitle")
-        self.current_title.setWordWrap(True)
+        self.current_title = PreviewLabel()
+        self.current_title.setObjectName("currentRunTitle")
         hero_layout.addWidget(self.current_title)
-        self.current_details = QLabel()
-        self.current_details.setWordWrap(True)
-        self.current_details.setMaximumWidth(620)
+        self.current_details = PreviewLabel(lines=2)
         hero_layout.addWidget(self.current_details)
         hero_layout.addStretch()
-        quick_row = QGridLayout()
+        quick_row = QHBoxLayout()
+        quick_row.setSpacing(5)
         self.current_action = QPushButton("Open current run")
         self.current_action.setProperty("accent", True)
         self.current_action.clicked.connect(self._open_current)
         board = QPushButton("Quest board")
         board.clicked.connect(lambda: self.navigate.emit("quests"))
-        paths = QPushButton("Learning paths")
-        paths.clicked.connect(lambda: self.navigate.emit("paths"))
-        quick_row.addWidget(self.current_action, 0, 0, 1, 2)
-        quick_row.addWidget(board, 1, 0)
-        quick_row.addWidget(paths, 1, 1)
+        quick_row.addWidget(self.current_action, 1)
+        quick_row.addWidget(board, 1)
         hero_layout.addLayout(quick_row)
-        main_row.addWidget(self.hero, 3)
+        left_layout.addWidget(self.hero)
+        main_row.addWidget(self.left_column, 2)
         self.timer_panel = TimerPanel(engine)
         self.timer_panel.timer_saved.connect(self.changed)
-        main_row.addWidget(self.timer_panel, 2)
-        outer.addLayout(main_row, 1)
+        main_row.addWidget(self.timer_panel, 1)
+        outer.addLayout(main_row)
+
+        self.heatmap = FocusHeatmap(engine)
+        outer.addWidget(self.heatmap)
 
         activity_card = Card()
         activity_layout = QVBoxLayout(activity_card)
+        activity_layout.setContentsMargins(14, 10, 14, 10)
+        activity_layout.setSpacing(4)
         activity_title = QLabel("[ RECENT ACTIVITY ]")
         activity_title.setObjectName("sectionTitle")
         activity_layout.addWidget(activity_title)
@@ -173,8 +178,8 @@ class DashboardScreen(Page):
         self.activity.setTextFormat(Qt.TextFormat.RichText)
         activity_layout.addWidget(self.activity)
         outer.addWidget(activity_card)
-        self.game_widgets = [self.level_card, self.xp_card, self.gold_card, self.path_card,
-                             self.xp_bar, self.hero, activity_card]
+        outer.addStretch()
+        self.game_widgets = [self.left_column, activity_card]
         self.refresh()
 
     def _open_current(self) -> None:
@@ -185,7 +190,6 @@ class DashboardScreen(Page):
         profile = self.engine.state["profile"]
         animate = profile.get("animations_enabled", True)
         timer_only = self.engine.timer_only_mode
-        self.greeting.setText("[ TIMER ]" if timer_only else f"Welcome back, {profile['player_name']}")
         for widget in self.game_widgets:
             widget.setVisible(not timer_only)
         self.level_card.set_value(self.engine.level)
@@ -207,13 +211,13 @@ class DashboardScreen(Page):
                 self.current_action.setEnabled(True)
             else:
                 self.current_title.setText("Current content is unavailable")
-                self.current_details.clear()
+                self.current_details.setText("")
         else:
             self.current_title.setText("Choose one focused quest")
             self.current_details.setText("Start a quest from the board. Only evidence of a completed definition of done earns rewards.")
             self.current_action.setText("Choose a quest")
             self.current_action.setEnabled(True)
-        entries = self.engine.progress["activity"][:5]
+        entries = self.engine.progress["activity"][:6]
         if not entries:
             self.activity.setText(f"<span style='color:{COLORS['muted']}'>No activity yet. Start your first quest.</span>")
         else:
@@ -225,6 +229,7 @@ class DashboardScreen(Page):
                 )
             )
         self.timer_panel.refresh()
+        self.heatmap.refresh()
 
 
 class QuestBoardScreen(Page):

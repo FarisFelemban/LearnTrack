@@ -162,6 +162,10 @@ QLabel#gold { color: @gold; }
 QLabel#magenta { color: @accent; }
 QLabel#statValue { font-family: "Rajdhani"; font-size: 34px; font-weight: 700; color: @text; }
 QLabel#statLabel { font-family: "Rajdhani"; font-weight: 600; color: @muted; font-size: 15px; }
+QLabel#compactStatValue { font-family: "Rajdhani"; font-size: 26px; font-weight: 700; }
+QLabel#compactStatLabel { font-family: "Rajdhani"; font-size: 24px; font-weight: 600; color: @muted; }
+QLabel#compactPathValue { font-family: "Rajdhani"; font-size: 24px; font-weight: 600; color: @accent; }
+QLabel#currentRunTitle { font-family: "Rajdhani"; font-size: 22px; font-weight: 600; }
 QPushButton {
     background-color: #13253a;
     border: 1px solid #245073;

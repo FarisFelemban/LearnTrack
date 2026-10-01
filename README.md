@@ -26,6 +26,12 @@ Turn on **Settings → Timer-only mode** to show just Timer, Total Time, and Set
 
 The focus card also shows your average pace. Press **Week ↻** to cycle through hours per week, month, and year; your choice is saved. The calculation divides focus hours by calendar days from your start date through today (including inactive days), then multiplies by 7, 365.2425 / 12, or 365.2425. It shows your current pace immediately, even before a full period has passed. New saves record their start date on the first focus tick. Older saves with recorded totals ask you to **Set start date…**; click **Since…** to correct it later. The date belongs to that save and is retained when subtracting time. Resetting all progress clears it.
 
+The Dashboard combines Level, XP, Gold, Active Path, and the XP bar in one compact panel, with a smaller Current Run beside the timer. The blue **Focus Heatmap** below them also appears in timer-only mode. It shows a calendar year with a year selector; hover a day to see focused hours rounded to one decimal place, such as **0.5 hours**, **1 hour**, or **1.5 hours**. Cells become brighter at under 1, 1–2, 2–4, and 4+ hours. Future dates are inactive.
+
+Daily history records Focus seconds from both the countdown and stopwatch using the computer's local date. Breaks, paused time, and time with the app closed are excluded. Daily recording starts with this update: earlier lifetime Focus time stays undated, and is not reconstructed from totals or the average's start date. Records survive save/reopen, export/import, and shared-folder saves; resetting all progress clears them.
+
+When subtracting Focus time in **Total Time**, choose a recorded date or **Older undated time**. The preview shows the selected balance and resulting lifetime total. A dated correction reduces that heatmap day and the lifetime total together; an undated correction changes only the older balance. You cannot subtract more than the selected balance. Break subtraction continues to use its lifetime total, and corrections preserve the running clock and focus-average start date.
+
 ## Included gameplay
 
 - Dashboard with level progress, current run, optional backdrop artwork, activity, editable focus/break timer presets, and a resizable always-on-top mini timer with play/pause controls and completion notifications

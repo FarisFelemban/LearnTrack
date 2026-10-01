@@ -253,7 +253,7 @@ class UISmokeTests(unittest.TestCase):
         timer_panel.begin_duration_edit()
         timer_panel.dial.editor.setText("not a time")
 
-        QTest.mouseClick(dashboard.greeting, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(dashboard.current_title, Qt.MouseButton.LeftButton)
         self.app.processEvents()
 
         self.assertTrue(timer_panel.dial.editor.isHidden())

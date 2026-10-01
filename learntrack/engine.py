@@ -29,14 +29,14 @@ class GameRuleError(ValueError):
 FOCUS_AVERAGE_DAYS = {"week": 7, "month": 365.2425 / 12, "year": 365.2425}
 
 
-def _tracking_date(value: object) -> date:
+def _tracking_date(value: object, label: str = "focus start date") -> date:
     try:
         parsed = date.fromisoformat(value)
         if parsed.isoformat() != value:
             raise ValueError
         return parsed
     except (TypeError, ValueError) as exc:
-        raise GameRuleError("Choose a valid focus start date (YYYY-MM-DD).") from exc
+        raise GameRuleError(f"Choose a valid {label} (YYYY-MM-DD).") from exc
 
 
 def now_iso() -> str:
@@ -202,6 +202,16 @@ def validate_state(state: object) -> None:
             raise GameRuleError("Timer totals must contain focus_seconds and break_seconds.")
         if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in totals.values()):
             raise GameRuleError("Timer totals must be nonnegative whole seconds.")
+    if "daily_focus_seconds" in progress:
+        daily = progress["daily_focus_seconds"]
+        if not isinstance(daily, dict):
+            raise GameRuleError("Daily focus time must be an object of dates and seconds.")
+        for day, seconds in daily.items():
+            _tracking_date(day, "focus date")
+            if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
+                raise GameRuleError("Daily focus time must be nonnegative whole seconds.")
+        if sum(daily.values()) > progress.get("timer_totals", {}).get("focus_seconds", 0):
+            raise GameRuleError("Daily focus time cannot exceed the lifetime focus total.")
     if progress.get("focus_tracking_started_on") is not None:
         _tracking_date(progress["focus_tracking_started_on"])
     period = state["profile"].get("focus_average_period", "week")
@@ -261,6 +271,14 @@ class GameEngine:
     def timer_totals(self) -> dict:
         return self.progress.get("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
 
+    @property
+    def daily_focus_seconds(self) -> dict[str, int]:
+        return self.progress.get("daily_focus_seconds", {})
+
+    @property
+    def undated_focus_seconds(self) -> int:
+        return self.timer_totals["focus_seconds"] - sum(self.daily_focus_seconds.values())
+
     def set_timer_only_mode(self, enabled: bool) -> None:
         if not isinstance(enabled, bool):
             raise GameRuleError("Timer-only mode must be true or false.")
@@ -299,7 +317,7 @@ class GameEngine:
         days = max(1, ((today or date.today()) - started).days + 1)
         return total / 3600 / days * FOCUS_AVERAGE_DAYS[self.focus_average_period]
 
-    def subtract_timer_time(self, mode: str, seconds: int) -> None:
+    def subtract_timer_time(self, mode: str, seconds: int, *, focus_date: str | None = None) -> None:
         if mode not in ("focus", "break"):
             raise GameRuleError("Choose focus or break time.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
@@ -307,7 +325,19 @@ class GameEngine:
         key = f"{mode}_seconds"
         if seconds > self.timer_totals[key]:
             raise GameRuleError("You cannot subtract more than the recorded total.")
+        if mode == "focus":
+            if focus_date is None:
+                available = self.undated_focus_seconds
+            else:
+                _tracking_date(focus_date, "focus date")
+                available = self.daily_focus_seconds.get(focus_date, 0)
+            if seconds > available:
+                raise GameRuleError("You cannot subtract more than the selected day's or undated focus time.")
+        elif focus_date is not None:
+            raise GameRuleError("A date can only be selected for focus time.")
         totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
+        if mode == "focus" and focus_date is not None:
+            self.daily_focus_seconds[focus_date] -= seconds
         totals[key] -= seconds
         self._changed()
 
@@ -984,8 +1014,12 @@ class GameEngine:
 
     def _record_clock_time(self, mode: str, elapsed: int) -> None:
         totals = self.progress.setdefault("timer_totals", {"focus_seconds": 0, "break_seconds": 0})
-        if elapsed and mode == "focus" and totals["focus_seconds"] == 0 and self.focus_tracking_started_on is None:
-            self.progress["focus_tracking_started_on"] = date.today().isoformat()
+        if elapsed and mode == "focus":
+            today = date.today().isoformat()
+            if totals["focus_seconds"] == 0 and self.focus_tracking_started_on is None:
+                self.progress["focus_tracking_started_on"] = today
+            daily = self.progress.setdefault("daily_focus_seconds", {})
+            daily[today] = daily.get(today, 0) + elapsed
         totals[f"{mode}_seconds"] += elapsed
 
     def set_timer_seconds(self, mode: str, seconds: int) -> None:

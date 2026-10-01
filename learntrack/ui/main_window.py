@@ -126,7 +126,7 @@ class MainWindow(QMainWindow):
         self.engine = GameEngine(state, self._autosave)
         self.setWindowTitle("LearnTrack")
         self.setMinimumSize(980, 680)
-        self.resize(1280, 820)
+        self.resize(1120, 760)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QHBoxLayout(root)

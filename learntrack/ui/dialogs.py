@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
@@ -90,6 +92,11 @@ class SubtractTimerTimeDialog(SystemDialog):
         self.setWindowTitle(f"Subtract {mode} time")
         self.setMinimumWidth(390)
         form = QFormLayout(self)
+        self.focus_source = None
+        if mode == "focus":
+            self.focus_source = QComboBox()
+            form.addRow("Subtract from", self.focus_source)
+            self.focus_source.currentIndexChanged.connect(self.refresh_preview)
         self.hours = QSpinBox()
         self.hours.setRange(0, 2_147_483_647)
         self.minutes = QSpinBox()
@@ -111,15 +118,46 @@ class SubtractTimerTimeDialog(SystemDialog):
 
     def refresh_preview(self) -> None:
         total = self.engine.timer_totals[f"{self.mode}_seconds"]
+        available = total
+        if self.focus_source is not None:
+            self._refresh_focus_sources()
+            selected = self.focus_source.currentData()
+            available = (self.engine.undated_focus_seconds if selected is None
+                         else self.engine.daily_focus_seconds.get(selected, 0))
         amount = self.amount_seconds()
-        valid = 0 < amount <= total
+        valid = 0 < amount <= available
         self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(valid)
-        result = f"After subtraction: {format_timer_total(total - amount)}" if valid else "Enter an amount greater than zero and no more than the total."
-        self.preview.setText(f"Current total: {format_timer_total(total)}\n{result}")
+        result = f"After subtraction: {format_timer_total(total - amount)}" if valid else "Enter an amount greater than zero and no more than the available time."
+        source = f"Selected balance: {format_timer_total(available)}\n" if self.focus_source is not None else ""
+        remaining = f"\nSelected balance after subtraction: {format_timer_total(available - amount)}" if valid and source else ""
+        self.preview.setText(f"{source}Current total: {format_timer_total(total)}\n{result}{remaining}")
+
+    def _refresh_focus_sources(self) -> None:
+        dates = sorted((day for day, seconds in self.engine.daily_focus_seconds.items() if seconds > 0), reverse=True)
+        sources = dates + [None]
+        existing = [self.focus_source.itemData(index) for index in range(self.focus_source.count())]
+        selected = self.focus_source.currentData()
+        if not existing:
+            today = date.today().isoformat()
+            selected = today if today in dates else dates[0] if dates else None
+        # Keep the selected day available when a running dialog's balance reaches zero.
+        if existing and selected is not None and selected not in sources:
+            dates = sorted(dates + [selected], reverse=True)
+            sources = dates + [None]
+        if sources == existing:
+            return
+        self.focus_source.blockSignals(True)
+        self.focus_source.clear()
+        for day in dates:
+            self.focus_source.addItem(date.fromisoformat(day).strftime("%d %b %Y"), day)
+        self.focus_source.addItem("Older undated time", None)
+        self.focus_source.setCurrentIndex(sources.index(selected))
+        self.focus_source.blockSignals(False)
 
     def accept(self) -> None:
         try:
-            self.engine.subtract_timer_time(self.mode, self.amount_seconds())
+            focus_date = self.focus_source.currentData() if self.focus_source is not None else None
+            self.engine.subtract_timer_time(self.mode, self.amount_seconds(), focus_date=focus_date)
         except GameRuleError as exc:
             QMessageBox.warning(self, "Cannot subtract time", str(exc))
             self.refresh_preview()

@@ -69,11 +69,11 @@ class TimerEngineTests(unittest.TestCase):
         self.start()
         self.engine.advance_timer(4)
         countdown = deepcopy(self.engine.progress["timer"])
-        self.engine.subtract_timer_time("focus", 3)
+        self.engine.subtract_timer_time("focus", 3, focus_date=date.today().isoformat())
         self.assertEqual(self.engine.progress["timer"], countdown)
         self.engine.advance_timer()
         self.assertEqual(self.engine.timer_totals["focus_seconds"], 2)
-        self.engine.subtract_timer_time("focus", 2)
+        self.engine.subtract_timer_time("focus", 2, focus_date=date.today().isoformat())
         self.assertEqual(self.engine.timer_totals["focus_seconds"], 0)
 
     def test_invalid_subtractions_leave_state_unchanged(self):
@@ -121,6 +121,7 @@ class TimerEngineTests(unittest.TestCase):
         self.assertEqual(len(saves), 1)
         self.assertEqual(saves[0]["progress"]["timer"]["remaining_seconds"], 9)
         self.assertEqual(saves[0]["progress"]["timer_totals"]["focus_seconds"], 1)
+        self.assertEqual(saves[0]["progress"]["daily_focus_seconds"], {date.today().isoformat(): 1})
 
     def test_focus_average_includes_inactive_days_and_converts_periods(self):
         self.engine.set_focus_tracking_start("2024-02-20")
@@ -150,7 +151,7 @@ class TimerEngineTests(unittest.TestCase):
         self.engine.advance_timer()
         self.assertEqual(self.engine.focus_tracking_started_on, date.today())
         self.engine.set_focus_tracking_start("2024-01-01")
-        self.engine.subtract_timer_time("focus", 1)
+        self.engine.subtract_timer_time("focus", 1, focus_date=date.today().isoformat())
         self.engine.advance_timer()
         self.assertEqual(self.engine.focus_tracking_started_on, date(2024, 1, 1))
         self.assertIsNone(GameEngine(create_default_state()).focus_tracking_started_on)
@@ -210,7 +211,7 @@ class TimerStorageTests(unittest.TestCase):
             self.assertTrue(loaded["profile"]["timer_only_mode"])
             self.assertEqual(loaded["progress"]["timer_totals"], {"focus_seconds": 12, "break_seconds": 5})
             laptop_engine = GameEngine(loaded, laptop.save)
-            laptop_engine.subtract_timer_time("focus", 2)
+            laptop_engine.subtract_timer_time("focus", 2, focus_date=date.today().isoformat())
             laptop_engine.update_timer(25, True)
             laptop_engine.advance_timer()
             laptop_engine.set_timer_only_mode(False)
@@ -221,6 +222,7 @@ class TimerStorageTests(unittest.TestCase):
             self.assertFalse(imported["profile"]["timer_only_mode"])
             self.assertFalse(imported["progress"]["timer"]["running"])
             self.assertEqual(imported["progress"]["timer_totals"], {"focus_seconds": 10, "break_seconds": 6})
+            self.assertEqual(imported["progress"]["daily_focus_seconds"], {date.today().isoformat(): 10})
             self.assertEqual(imported["progress"]["focus_tracking_started_on"], "2024-01-01")
             self.assertEqual(imported["profile"]["focus_average_period"], "month")
             reloaded = SaveManager(path).load()
@@ -229,6 +231,7 @@ class TimerStorageTests(unittest.TestCase):
             self.assertTrue(backup.is_file())
             self.assertFalse(reset["profile"]["timer_only_mode"])
             self.assertEqual(reset["progress"]["timer_totals"], {"focus_seconds": 0, "break_seconds": 0})
+            self.assertEqual(reset["progress"]["daily_focus_seconds"], {})
             self.assertIsNone(reset["progress"]["focus_tracking_started_on"])
             self.assertEqual(reset["profile"]["focus_average_period"], "week")
 

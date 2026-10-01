@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizeGrip,
+    QSizePolicy,
+    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -45,28 +47,85 @@ class Card(QFrame):
         paint_system_panel(painter, self.rect(), emphasis=self.objectName() == "heroCard")
 
 
-class StatCard(Card):
-    def __init__(self, label: str, value: str = "0", color_name: str = "cyan"):
+class PreviewLabel(QLabel):
+    """Keep a short text preview while making the full text available on hover."""
+
+    def __init__(self, lines: int = 1):
         super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 13, 16, 13)
-        self.value_label = QLabel(value)
-        self.value_label.setObjectName("statValue")
-        self.value_label.setWordWrap(True)
+        self._full_text = ""
+        self.lines = lines
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API
+        self._full_text = str(text)
+        self.setToolTip(self._full_text)
+        self._update_preview()
+
+    def _update_preview(self) -> None:
+        metrics = self.fontMetrics()
+        width = max(1, self.contentsRect().width())
+        remaining = " ".join(self._full_text.split())
+        lines = []
+        for _ in range(self.lines - 1):
+            if metrics.horizontalAdvance(remaining) <= width:
+                break
+            preview = metrics.elidedText(remaining, Qt.TextElideMode.ElideRight, width).removesuffix("…")
+            prefix = preview.rsplit(" ", 1)[0] if " " in preview else preview
+            if not prefix:
+                break
+            lines.append(prefix)
+            remaining = remaining[len(prefix):].lstrip()
+        lines.append(metrics.elidedText(remaining, Qt.TextElideMode.ElideRight, width))
+        QLabel.setText(self, "\n".join(lines))
+        self.setFixedHeight(metrics.lineSpacing() * self.lines + 2)
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._update_preview()
+
+    def changeEvent(self, event):  # noqa: N802 - Qt API
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._update_preview()
+
+
+class StatCard(Card):
+    def __init__(self, label: str, value: str = "0", color_name: str = "cyan", *, compact: bool = False, inline: bool = False):
+        super().__init__()
+        self.compact = compact
+        layout = QHBoxLayout(self) if inline else QVBoxLayout(self)
+        if compact:
+            layout.setContentsMargins(0, 0, 0, 0)
+        else:
+            layout.setContentsMargins(16, 13, 16, 13)
+        layout.setSpacing(3 if compact else 6)
+        self.value_label = PreviewLabel() if compact else QLabel()
+        self.value_label.setObjectName("compactStatValue" if compact else "statValue")
+        self.value_label.setText(value)
+        self.value_label.setWordWrap(not compact)
         if color_name in ("cyan", "gold", "magenta"):
             self.value_label.setStyleSheet(
                 "color:" + COLORS["gold" if color_name == "gold" else "accent"]
             )
-        caption = QLabel(label.upper())
-        caption.setObjectName("statLabel")
-        layout.addWidget(self.value_label)
-        layout.addWidget(caption)
+        caption = QLabel(label.upper() + (":" if inline else ""))
+        caption.setObjectName("compactStatLabel" if compact else "statLabel")
+        if inline:
+            layout.addWidget(caption)
+            layout.addWidget(self.value_label, 1)
+        else:
+            layout.addWidget(self.value_label)
+            layout.addWidget(caption)
         self._number_animation = QVariantAnimation(self)
         self._number_animation.setDuration(300)
         self._number_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._number_animation.valueChanged.connect(self._show_animated_number)
         self._number_target: int | None = None
         self._number_suffix = ""
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        if not self.compact:
+            super().paintEvent(event)
 
     def set_value(self, value: object) -> None:
         self._number_animation.stop()
@@ -430,7 +489,9 @@ class TimerPanel(Card):
         self.title_button.setCheckable(True)
         self.title_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.title_button.clicked.connect(self.toggle_timer_only_mode)
-        self.presets_button = QPushButton("Presets…")
+        self.presets_button = QPushButton("Settings…")
+        self.presets_button.ensurePolished()
+        self.presets_button.setMinimumWidth(self.presets_button.sizeHint().width())
         self.presets_button.clicked.connect(self.edit_presets)
         self.stopwatch_button = QPushButton("Stopwatch")
         self.stopwatch_button.setProperty("clockSelector", True)
@@ -446,7 +507,14 @@ class TimerPanel(Card):
         self.dial.outside_clicked.connect(self.finish_duration_edit)
         self.dial.value_submitted.connect(self.apply_edited_duration)
         layout.addWidget(self.dial, alignment=Qt.AlignmentFlag.AlignHCenter)
-        duration_row = QHBoxLayout()
+        # Both clock modes share one row whose size accommodates either set of controls.
+        mode_controls = QWidget()
+        mode_controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.mode_controls_layout = QStackedLayout(mode_controls)
+        self.mode_controls_layout.setContentsMargins(0, 0, 0, 0)
+        timer_controls = QWidget()
+        duration_row = QHBoxLayout(timer_controls)
+        duration_row.setContentsMargins(0, 0, 0, 0)
         self.focus_buttons = []
         for index in range(3):
             button = QPushButton()
@@ -456,9 +524,11 @@ class TimerPanel(Card):
         self.break_button = QPushButton()
         self.break_button.clicked.connect(self.choose_break_preset)
         duration_row.addWidget(self.break_button)
-        layout.addLayout(duration_row)
+        self.mode_controls_layout.addWidget(timer_controls)
         self.category_buttons = []
-        category_row = QHBoxLayout()
+        stopwatch_controls = QWidget()
+        category_row = QHBoxLayout(stopwatch_controls)
+        category_row.setContentsMargins(0, 0, 0, 0)
         for mode in ("focus", "break"):
             button = QPushButton(mode.title())
             button.setProperty("clockSelector", True)
@@ -466,7 +536,8 @@ class TimerPanel(Card):
             button.clicked.connect(lambda checked=False, value=mode: self.select_category(value))
             category_row.addWidget(button)
             self.category_buttons.append(button)
-        layout.addLayout(category_row)
+        self.mode_controls_layout.addWidget(stopwatch_controls)
+        layout.addWidget(mode_controls)
         control_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.setProperty("accent", True)
@@ -534,10 +605,8 @@ class TimerPanel(Card):
         stopwatch = self.engine.clock_type == "stopwatch"
         self.stopwatch_button.setChecked(stopwatch)
         self.presets_button.setText("Settings…" if stopwatch else "Presets…")
-        for button in self.focus_buttons + [self.break_button]:
-            button.setVisible(not stopwatch)
+        self.mode_controls_layout.setCurrentIndex(1 if stopwatch else 0)
         for button, mode in zip(self.category_buttons, ("focus", "break")):
-            button.setVisible(stopwatch)
             button.setChecked(stopwatch and self.engine.stopwatch["mode"] == mode)
         self.title_button.setChecked(self.engine.timer_only_mode)
         self.title_button.setToolTip(

@@ -307,6 +307,7 @@ def create_default_state(player_name: str = "Adventurer") -> dict:
             "purchases": [],
             "activity": [],
             "timer_totals": {"focus_seconds": 0, "break_seconds": 0},
+            "daily_focus_seconds": {},
             "focus_tracking_started_on": None,
             "clock_type": "timer",
             "stopwatch": {
