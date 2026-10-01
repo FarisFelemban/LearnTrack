@@ -135,7 +135,6 @@ class FocusHeatmap(Card):
         layout.addLayout(heading)
         self.grid = FocusHeatmapGrid()
         layout.addWidget(self.grid)
-        self.setToolTip("Blue intensity: zero, under 1 hour, 1–2 hours, 2–4 hours, and 4+ hours. Breaks are excluded.")
         self.refresh()
 
     def refresh(self) -> None:

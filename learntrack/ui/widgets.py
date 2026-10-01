@@ -48,18 +48,19 @@ class Card(QFrame):
 
 
 class PreviewLabel(QLabel):
-    """Keep a short text preview while making the full text available on hover."""
+    """Keep a short text preview, with an optional full-text tooltip."""
 
-    def __init__(self, lines: int = 1):
+    def __init__(self, lines: int = 1, *, show_tooltip: bool = True):
         super().__init__()
         self._full_text = ""
+        self._show_tooltip = show_tooltip
         self.lines = lines
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt API
         self._full_text = str(text)
-        self.setToolTip(self._full_text)
+        self.setToolTip(self._full_text if self._show_tooltip else "")
         self._update_preview()
 
     def _update_preview(self) -> None:
@@ -100,7 +101,7 @@ class StatCard(Card):
         else:
             layout.setContentsMargins(16, 13, 16, 13)
         layout.setSpacing(3 if compact else 6)
-        self.value_label = PreviewLabel() if compact else QLabel()
+        self.value_label = PreviewLabel(show_tooltip=False) if compact else QLabel()
         self.value_label.setObjectName("compactStatValue" if compact else "statValue")
         self.value_label.setText(value)
         self.value_label.setWordWrap(not compact)

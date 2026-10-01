@@ -21,7 +21,7 @@ from .defaults import create_default_state
 from .storage import SaveCorruptionError, SaveManager
 from .ui.dialogs import NameSetupDialog
 from .ui.main_window import MainWindow
-from .ui.theme import APP_STYLE, WindowsTitleBarStyler
+from .ui.theme import APP_STYLE, LearnTrackStyle, WindowsTitleBarStyler
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:
@@ -37,7 +37,7 @@ def create_application(argv: list[str] | None = None) -> QApplication:
         QFontDatabase.addApplicationFont(str(font_path))
     app.setApplicationDisplayName("LearnTrack")
     app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
-    app.setStyle("Fusion")
+    app.setStyle(LearnTrackStyle())
     application_font = QFont()
     application_font.setFamilies(["Inter", "Segoe UI Symbol"])
     app.setFont(application_font)

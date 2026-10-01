@@ -235,7 +235,7 @@ class HeatmapUITests(unittest.TestCase):
                 self.assertTrue(self.dashboard.hero.rect().contains(button.geometry()))
             self.assertEqual(self.dashboard.current_title.toolTip(), title)
             self.assertIn(details, self.dashboard.current_details.toolTip())
-            self.assertEqual(self.dashboard.path_card.value_label.toolTip(), path_name)
+            self.assertEqual(self.dashboard.path_card.value_label.toolTip(), "")
         self.assertFalse(any(label.text().startswith("Welcome back") for label in self.dashboard.findChildren(QLabel)))
         self.window.engine.set_timer_only_mode(True)
         self.window.refresh_all()

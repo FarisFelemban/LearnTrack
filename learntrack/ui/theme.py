@@ -8,7 +8,7 @@ from ctypes import wintypes
 
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QProxyStyle, QStyle, QWidget
 
 
 TITLE_BAR_COLOR = "#0b1220"
@@ -19,6 +19,18 @@ COLORS = {
     "muted": "#9aafc5", "gold": "#ffd080", "danger": "#ff8195",
 }
 DISPLAY_FONT = "Rajdhani"
+
+
+class LearnTrackStyle(QProxyStyle):
+    """Keep Fusion styling with a shorter initial tooltip delay."""
+
+    def __init__(self):
+        super().__init__("Fusion")
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):  # noqa: N802 - Qt API
+        if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+            return 500
+        return super().styleHint(hint, option, widget, returnData)
 
 
 def paint_system_panel(painter, bounds, *, fill=True, emphasis=False):
@@ -162,9 +174,9 @@ QLabel#gold { color: @gold; }
 QLabel#magenta { color: @accent; }
 QLabel#statValue { font-family: "Rajdhani"; font-size: 34px; font-weight: 700; color: @text; }
 QLabel#statLabel { font-family: "Rajdhani"; font-weight: 600; color: @muted; font-size: 15px; }
-QLabel#compactStatValue { font-family: "Rajdhani"; font-size: 26px; font-weight: 700; }
-QLabel#compactStatLabel { font-family: "Rajdhani"; font-size: 24px; font-weight: 600; color: @muted; }
-QLabel#compactPathValue { font-family: "Rajdhani"; font-size: 24px; font-weight: 600; color: @accent; }
+QLabel#compactStatValue { font-family: "Rajdhani"; font-size: 22px; font-weight: 700; }
+QLabel#compactStatLabel { font-family: "Rajdhani"; font-size: 20px; font-weight: 600; color: @muted; }
+QLabel#compactPathValue { font-family: "Rajdhani"; font-size: 20px; font-weight: 600; color: @accent; }
 QLabel#currentRunTitle { font-family: "Rajdhani"; font-size: 22px; font-weight: 600; }
 QPushButton {
     background-color: #13253a;
