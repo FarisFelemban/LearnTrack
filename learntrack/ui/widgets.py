@@ -335,7 +335,7 @@ class CircularTimer(QWidget):
 
 
 class MiniTimerWindow(QWidget):
-    """Compact always-on-top view of the active timer."""
+    """Compact view of the active timer in a normal window."""
 
     hide_requested = Signal()
     toggle_requested = Signal()
@@ -343,7 +343,7 @@ class MiniTimerWindow(QWidget):
     def __init__(self):
         super().__init__(
             None,
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint,
+            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint,
         )
         self._allow_close = False
         self._drag_offset = None

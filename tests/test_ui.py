@@ -125,7 +125,7 @@ class UISmokeTests(unittest.TestCase):
         self.assertTrue(self.state["progress"]["timer"]["running"])
         self.assertEqual((self.state["progress"]["xp"], self.state["progress"]["gold"]), (0, 0))
 
-    def test_running_timer_shows_always_on_top_mini_timer(self):
+    def test_running_timer_shows_normal_mini_timer_window(self):
         self.window.show()
         timer_panel = self.window.screens["dashboard"].timer_panel
         timer_panel.choose("focus", 20)
@@ -134,7 +134,8 @@ class UISmokeTests(unittest.TestCase):
 
         mini_timer = self.window.mini_timer
         self.assertTrue(mini_timer.isVisible())
-        self.assertTrue(mini_timer.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        self.assertFalse(mini_timer.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        self.assertEqual(mini_timer.windowType(), Qt.WindowType.Window)
         self.assertTrue(mini_timer.windowFlags() & Qt.WindowType.FramelessWindowHint)
         self.assertFalse(hasattr(mini_timer, "mode_label"))
         self.assertFalse(hasattr(mini_timer, "status_label"))
